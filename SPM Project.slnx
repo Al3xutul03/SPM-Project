@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/Solution Items/">
+    <File Path="debug.ps1" />
+    <File Path="debug.sh" />
+  </Folder>
+  <Project Path="Application/Application.csproj" />
+  <Project Path="EnigmaLogic/EnigmaLogic.csproj" />
+  <Project Path="Tests/Tests.csproj" />
+</Solution>
