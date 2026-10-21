@@ -1,0 +1,54 @@
+name: CI Build and Test
+
+on:
+  push:
+    branches: [ "main", "master", "development" ]
+  pull_request:
+    branches: [ "main", "master", "development" ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '10.0.x'
+
+    - name: Restore dependencies
+      run: dotnet restore
+
+    - name: Build
+      run: dotnet build --no-restore --configuration Release
+
+    - name: Test
+      run: dotnet test --no-build --verbosity normal --configuration Release
+
+  docker-check:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Build Test Container
+      run: docker build -f Application/Dockerfile -t spm-project-test .
+
+    - name: Verify Container Runs
+      run: |
+        docker run -d --name spm-project-test -p 8080:8080 spm-project-test
+        for i in $(seq 1 30); do
+          if curl -s -f -o /dev/null http://localhost:8080; then
+            echo "Container is up and responding on http://localhost:8080"
+            docker rm -f spm-project-test
+            exit 0
+          fi
+          sleep 1
+        done
+        echo "Container failed to respond within 30 seconds. Logs:"
+        docker logs spm-project-test
+        docker rm -f spm-project-test
+        exit 1
