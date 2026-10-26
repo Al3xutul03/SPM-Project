@@ -1,8 +1,38 @@
 ﻿@{
-    ViewData["Title"] = "Home Page";
+    ViewData["Title"] = "Enigma Machine";
 }
 
-<div class="text-center">
-    <h1 class="display-4">Welcome</h1>
-    <p>Learn about <a href="https://learn.microsoft.com/aspnet/core">building Web apps with ASP.NET Core</a>.</p>
+<div class="navigation-box">
+    <div class="nav-buttons">
+        <button class="nav-btn active" data-page="Encryption">Encryption</button>
+        <button class="nav-btn" data-page="DecryptionGrok">Decryption Grok</button>
+        <button class="nav-btn" data-page="DecryptionGemini">Decryption Gemini</button>
+        <button class="nav-btn" data-page="DecryptionGPT">Decryption ChatGpt</button>
+        <button class="nav-btn" data-page="DecryptionClaude">Decryption Claude</button>
+        <button class="nav-btn" data-page="DecryptionPerplexity">Decryption Perplexity</button>
+    </div>
 </div>
+
+<div class="converter-card" id="converter-content">
+    @* Se încarcă implicit prima pagină *@
+    @await Html.PartialAsync("_Encryption")
+</div>
+
+@section Scripts {
+    <script>
+        $(document).ready(function () {
+            $('.nav-btn').click(function () {
+                var pageName = $(this).data('page');
+
+                $('.nav-btn').removeClass('active');
+                $(this).addClass('active');
+
+                $.get('/Home/GetConverterPage', { page: pageName }, function (data) {
+                    $('#converter-content').html(data);
+                }).fail(function () {
+                    alert("A apărut o eroare la încărcarea paginii parțiale!");
+                });
+            });
+        });
+    </script>
+}
