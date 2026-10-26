@@ -15,7 +15,7 @@
     </div>
 
     <fieldset class="lt-letters">
-        <legend class="lt-legend">Litere</legend>
+        <legend class="lt-legend">Rotoare</legend>
 
         @* Primele 3 casete *@
         <div class="lt-grid lt-grid-first">
@@ -23,7 +23,7 @@
             {
                 <div class="lt-cell">
                     <span>@i</span>
-                    <select id="lt-letter-@i" aria-label="Litera @i">
+                    <select id="lt-letter-@i" aria-label="Rotorul @i">
                         <option value="">–</option>
                         @foreach (var l in letters)
                         {
@@ -37,12 +37,12 @@
         <div class="lt-divider" aria-hidden="true"></div>
 
         @* Restul de 26 de casete *@
-        <h2 class="lt-subtitle">Restul literelor</h2>
+        <h2 class="lt-subtitle">Plugboard</h2>
         <div class="lt-grid">
             @for (int i = 4; i <= 29; i++)
             {
                 <div class="lt-cell">
-                    <span>@i</span>
+                    <span>@letters[i - 4]</span>
                     <select id="lt-letter-@i" aria-label="Litera @i">
                         <option value="">–</option>
                         @foreach (var l in letters)
