@@ -1,0 +1,45 @@
+@{
+    var currentController = ViewContext.RouteData.Values["controller"]?.ToString();
+    string Active(string controller) => currentController == controller ? "active" : "";
+}
+<!DOCTYPE html>
+<html lang="ro">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>@ViewData["Title"] · Enigma</title>
+    <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700&family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="~/css/formular.css" asp-append-version="true">
+</head>
+<body>
+
+<header class="site-header">
+    <p class="site-title">Enigma</p>
+    <span class="site-date">Anno Domini MMXXVI</span>
+</header>
+
+<main class="page">
+    <nav class="nav-panel" aria-label="Alege pagina">
+        <p class="nav-label">Alege pagina</p>
+        <ul class="nav-list">
+            <li><a asp-controller="1" asp-action="Index" class="@Active("Home")">Acasă</a></li>
+            <li><a asp-controller="2" asp-action="Index" class="@Active("BinarZecimal")">Binar → Zecimal</a></li>
+            <li><a asp-controller="3" asp-action="Index" class="@Active("ZecimalBinar")">Zecimal → Binar</a></li>
+            <li><a asp-controller="4" asp-action="Index" class="@Active("Hexazecimal")">Hexazecimal</a></li>
+            <li><a asp-controller="5" asp-action="Index" class="@Active("Octal")">Octal</a></li>
+            <li><a asp-controller="6" asp-action="Index" class="@Active("TextBinar")">Text → Binar</a></li>
+            <li><a asp-controller="7" asp-action="Index" class="@Active("CifreRomane")">Cifre romane</a></li>
+            <li><a asp-controller="Formular" asp-action="Index" class="@Active("Formular")">Formular</a></li>
+        </ul>
+    </nav>
+
+    @RenderBody()
+</main>
+
+<footer class="site-footer">
+    Enigma · toate drepturile rezervate
+</footer>
+
+@await RenderSectionAsync("Scripts", required: false)
+</body>
+</html>
