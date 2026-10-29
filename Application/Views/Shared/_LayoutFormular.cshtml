@@ -1,45 +1,50 @@
-@{
-    var currentController = ViewContext.RouteData.Values["controller"]?.ToString();
-    string Active(string controller) => currentController == controller ? "active" : "";
-}
 <!DOCTYPE html>
-<html lang="ro">
+<html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>@ViewData["Title"] · Enigma</title>
-    <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700&family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="~/css/formular.css" asp-append-version="true">
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>@ViewData["Title"] - Application</title>
+    <script type="importmap"></script>
+    <link rel="stylesheet" href="~/lib/bootstrap/dist/css/bootstrap.min.css" />
+    <link rel="stylesheet" href="~/css/site.css" asp-append-version="true" />
+    <link rel="stylesheet" href="~/Application.styles.css" asp-append-version="true" />
 </head>
 <body>
+  @*   <header>
+        <nav class="navbar navbar-expand-sm navbar-toggleable-sm navbar-light bg-white border-bottom box-shadow mb-3">
+            <div class="container-fluid">
+                <a class="navbar-brand" asp-area="" asp-controller="Home" asp-action="Index">Application</a>
+                <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target=".navbar-collapse" aria-controls="navbarSupportedContent"
+                        aria-expanded="false" aria-label="Toggle navigation">
+                    <span class="navbar-toggler-icon"></span>
+                </button>
+                <div class="navbar-collapse collapse d-sm-inline-flex justify-content-between">
+                    <ul class="navbar-nav flex-grow-1">
+                        <li class="nav-item">
+                            <a class="nav-link text-dark" asp-area="" asp-controller="Home" asp-action="Index">Home</a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link text-dark" asp-area="" asp-controller="Home" asp-action="Privacy">Privacy</a>
+                        </li>
+                    </ul>
+                </div>
+            </div>
+        </nav>
+    </header> *@
+    <div class="container">
+        <main role="main" class="pb-3">
+            @RenderBody()
+        </main>
+    </div>
 
-<header class="site-header">
-    <p class="site-title">Enigma</p>
-    <span class="site-date">Anno Domini MMXXVI</span>
-</header>
-
-<main class="page">
-    <nav class="nav-panel" aria-label="Alege pagina">
-        <p class="nav-label">Alege pagina</p>
-        <ul class="nav-list">
-            <li><a asp-controller="1" asp-action="Index" class="@Active("Home")">Acasă</a></li>
-            <li><a asp-controller="2" asp-action="Index" class="@Active("BinarZecimal")">Binar → Zecimal</a></li>
-            <li><a asp-controller="3" asp-action="Index" class="@Active("ZecimalBinar")">Zecimal → Binar</a></li>
-            <li><a asp-controller="4" asp-action="Index" class="@Active("Hexazecimal")">Hexazecimal</a></li>
-            <li><a asp-controller="5" asp-action="Index" class="@Active("Octal")">Octal</a></li>
-            <li><a asp-controller="6" asp-action="Index" class="@Active("TextBinar")">Text → Binar</a></li>
-            <li><a asp-controller="7" asp-action="Index" class="@Active("CifreRomane")">Cifre romane</a></li>
-            <li><a asp-controller="Formular" asp-action="Index" class="@Active("Formular")">Formular</a></li>
-        </ul>
-    </nav>
-
-    @RenderBody()
-</main>
-
-<footer class="site-footer">
-    Enigma · toate drepturile rezervate
-</footer>
-
-@await RenderSectionAsync("Scripts", required: false)
+  @*   <footer class="border-top footer text-muted">
+        <div class="container">
+            &copy; 2026 - Application - <a asp-area="" asp-controller="Home" asp-action="Privacy">Privacy</a>
+        </div>
+    </footer> *@
+    <script src="~/lib/jquery/dist/jquery.min.js"></script>
+    <script src="~/lib/bootstrap/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="~/js/site.js" asp-append-version="true"></script>
+    @await RenderSectionAsync("Scripts", required: false)
 </body>
 </html>
