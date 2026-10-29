@@ -18,7 +18,7 @@ namespace ArhivaConvertoarelor.Controllers
                 "DecryptionGemini" => PartialView("_DecryptionGemini"),
                 "DecryptionGPT" => PartialView("_DecryptionGPT"),
                 "DecryptionClaude" => PartialView("_DecryptionClaude"),
-                "DecryptionPerplexity" => PartialView("_DecryptionPerplexity"),
+                "DecryptionDeepSeek" => PartialView("_DecryptionDeepSeek"),
                 _ => PartialView("_Encryption")
             };
         }
