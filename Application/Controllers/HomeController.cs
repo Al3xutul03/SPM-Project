@@ -1,8 +1,6 @@
-using Application.Models;
 using Microsoft.AspNetCore.Mvc;
-using System.Diagnostics;
 
-namespace Application.Controllers
+namespace ArhivaConvertoarelor.Controllers
 {
     public class HomeController : Controller
     {
@@ -11,15 +9,18 @@ namespace Application.Controllers
             return View();
         }
 
-        public IActionResult Privacy()
+        public IActionResult GetConverterPage(string page)
         {
-            return View();
-        }
-
-        [ResponseCache(Duration = 0, Location = ResponseCacheLocation.None, NoStore = true)]
-        public IActionResult Error()
-        {
-            return View(new ErrorViewModel { RequestId = Activity.Current?.Id ?? HttpContext.TraceIdentifier });
+            return page switch
+            {
+                "Encryption" => PartialView("_Encryption"),
+                "DecryptionGrok" => PartialView("_DecryptionGrok"),
+                "DecryptionGemini" => PartialView("_DecryptionGemini"),
+                "DecryptionGPT" => PartialView("_DecryptionGPT"),
+                "DecryptionClaude" => PartialView("_DecryptionClaude"),
+                "DecryptionDeepSeek" => PartialView("_DecryptionDeepSeek"),
+                _ => PartialView("_Encryption")
+            };
         }
     }
 }
