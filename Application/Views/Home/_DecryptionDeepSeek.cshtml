@@ -1,7 +1,26 @@
 ﻿<h2 class="converter-title">DECRYPTION DEEPSEEK</h2>
 
 <div class="colleague-workspace">
-    <p style="text-style: italic; color: #7D6548; text-align: center; padding-top: 50px;">
-        [ Spațiu rezervat pentru casetele de text și logica de conversie ]
-    </p>
+    <section class="card lt-converter" aria-label="Formular Decryption DeepSeek">
+        <!-- Caseta pentru textul codificat (Input) -->
+        <div class="lt-row" style="margin-bottom: 20px;">
+            <div class="lt-field" style="width: 100%;">
+                <label for="lt-ciphertext-deepseek">Ciphertext</label>
+                <textarea id="lt-ciphertext-deepseek" rows="5" placeholder="Enter the cipher here..."></textarea>
+            </div>
+        </div>
+
+        <!-- Butonul de conversie -->
+        <div style="text-align: center; margin-bottom: 20px;">
+            <button type="button" class="lt-button">DECODE</button>
+        </div>
+
+        <!-- Caseta pentru textul decodificat (Output) -->
+        <div class="lt-row">
+            <div class="lt-field" style="width: 100%;">
+                <label for="lt-plaintext-deepseek">Plaintext</label>
+                <textarea id="lt-plaintext-deepseek" rows="5" placeholder="The plaintext will appear here..." readonly style="background-color: #f9f6f0;"></textarea>
+            </div>
+        </div>
+    </section>
 </div>
