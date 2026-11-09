@@ -5,18 +5,18 @@ namespace EnigmaLogic.Services.Abstractions;
 public interface IEnigmaSimService
 {
     /// <summary>
-    /// Sets the rotors, ring settings, initial positions, reflector, and plugboard.
+    /// Sets the initial rotor positions and plugboard pairs.
     /// </summary>
     /// <param name="settings">The complete machine setup configuration.</param>
     /// <param name="RandomSettings">If true, randomizes the settings instead of using the provided configuration.</param>
     void Configure(EnigmaSettings? settings = null, bool RandomSettings = true);
 
     /// <summary>
-    /// Runs input text through the configured machine.
-    /// along with the updated rotor window positions.
+    /// Runs input text (or a random plaintext if omitted) through the configured machine.
     /// </summary>
+    /// <param name="inputText">Optional plaintext or ciphertext to process. If null or whitespace, a random plaintext is used.</param>
     /// <returns>The processed text.</returns>
-    string Process();
+    string Process(string? inputText = null);
 
     /// <summary>
     /// Checks if the guessed input and guessed initial machine settings match the actual simulation state.

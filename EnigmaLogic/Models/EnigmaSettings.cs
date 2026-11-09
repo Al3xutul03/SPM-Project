@@ -1,17 +1,16 @@
 namespace EnigmaLogic.Models;
 
 /// <summary>
-/// Complete setup required before typing on the Enigma machine.
+/// Simplified setup required before typing on the Enigma machine.
+/// Uses standard rotors I, II, III (ring settings 'A') and Reflector B.
 /// </summary>
-/// <param name="LeftRotor">Slowest-moving rotor (left slot).</param>
-/// <param name="MiddleRotor">Middle-slot rotor.</param>
-/// <param name="RightRotor">Fastest-moving rotor (right slot, steps on every keypress).</param>
-/// <param name="Reflector">Reflector type (e.g., "B" or "C").</param>
+/// <param name="Rotor1">Initial letter in the 1st (left) rotor window ('A'–'Z').</param>
+/// <param name="Rotor2">Initial letter in the 2nd (middle) rotor window ('A'–'Z').</param>
+/// <param name="Rotor3">Initial letter in the 3rd (right) rotor window ('A'–'Z').</param>
 /// <param name="PlugboardPairs">Swapped letter pairs on the front panel (e.g., ["AB", "CD", "EF"]).</param>
 public record EnigmaSettings(
-    RotorConfig LeftRotor,
-    RotorConfig MiddleRotor,
-    RotorConfig RightRotor,
-    string Reflector,
+    char Rotor1,
+    char Rotor2,
+    char Rotor3,
     IReadOnlyList<string> PlugboardPairs
 );

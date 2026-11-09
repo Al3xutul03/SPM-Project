@@ -6,20 +6,13 @@ namespace EnigmaLogic.Services;
 
 public class EnigmaSimService : IEnigmaSimService
 {
-    private static readonly Dictionary<string, (string Wiring, char Notch)> RotorDefinitions = new(StringComparer.OrdinalIgnoreCase)
-    {
-        ["I"]   = ("EKMFLGDQVZNTOWYHXUSPAIBRCJ", 'Q'),
-        ["II"]  = ("AJDKSIRUXBLHWTMCQGZNPYFVOE", 'E'),
-        ["III"] = ("BDFHJLCPRTXVZNYEIWGAKMUSQO", 'V'),
-        ["IV"]  = ("ESOVPZJAYQUIRHXLNFTGKDCMWB", 'J'),
-        ["V"]   = ("VZBRGITYUPSDNHLXAWMJQOFECK", 'Z')
-    };
-
-    private static readonly Dictionary<string, string> ReflectorDefinitions = new(StringComparer.OrdinalIgnoreCase)
-    {
-        ["B"] = "YRUHQSLDPXNGOKMIEBFZCWVJAT",
-        ["C"] = "FVPJIAOYEDRZXWGCTKUQSBNMHL"
-    };
+    // Standard Wehrmacht Enigma I Rotors I, II, III and Reflector B
+    private const string LeftRotorWiring = "EKMFLGDQVZNTOWYHXUSPAIBRCJ";
+    private const string MiddleRotorWiring = "AJDKSIRUXBLHWTMCQGZNPYFVOE";
+    private const char MiddleRotorNotch = 'E';
+    private const string RightRotorWiring = "BDFHJLCPRTXVZNYEIWGAKMUSQO";
+    private const char RightRotorNotch = 'V';
+    private const string ReflectorBWiring = "YRUHQSLDPXNGOKMIEBFZCWVJAT";
 
     private static readonly string[] SamplePlaintexts =
     [
@@ -53,14 +46,18 @@ public class EnigmaSimService : IEnigmaSimService
         LastOutput = null;
     }
 
-    public string Process()
+    public string Process(string? inputText = null)
     {
         if (CurrentSettings is null)
         {
             throw new InvalidOperationException("Machine must be configured by calling Configure() before calling Process().");
         }
 
-        LastInput = SamplePlaintexts[Random.Shared.Next(SamplePlaintexts.Length)];
+        string rawInput = string.IsNullOrWhiteSpace(inputText)
+            ? SamplePlaintexts[Random.Shared.Next(SamplePlaintexts.Length)]
+            : inputText;
+
+        LastInput = NormalizeText(rawInput);
         LastOutput = RunMachine(LastInput, CurrentSettings);
 
         return LastOutput.OutputText;
@@ -83,19 +80,9 @@ public class EnigmaSimService : IEnigmaSimService
 
     private static bool AreSettingsEqual(EnigmaSettings actual, EnigmaSettings expected)
     {
-        if (expected.LeftRotor is null || expected.MiddleRotor is null || expected.RightRotor is null || expected.Reflector is null)
-        {
-            return false;
-        }
-
-        if (!AreRotorsEqual(actual.LeftRotor, expected.LeftRotor) ||
-            !AreRotorsEqual(actual.MiddleRotor, expected.MiddleRotor) ||
-            !AreRotorsEqual(actual.RightRotor, expected.RightRotor))
-        {
-            return false;
-        }
-
-        if (!string.Equals(actual.Reflector.Trim(), expected.Reflector.Trim(), StringComparison.OrdinalIgnoreCase))
+        if (char.ToUpperInvariant(actual.Rotor1) != char.ToUpperInvariant(expected.Rotor1) ||
+            char.ToUpperInvariant(actual.Rotor2) != char.ToUpperInvariant(expected.Rotor2) ||
+            char.ToUpperInvariant(actual.Rotor3) != char.ToUpperInvariant(expected.Rotor3))
         {
             return false;
         }
@@ -112,30 +99,14 @@ public class EnigmaSimService : IEnigmaSimService
         }
     }
 
-    private static bool AreRotorsEqual(RotorConfig actual, RotorConfig expected)
-    {
-        return string.Equals(actual.RotorName.Trim(), expected.RotorName.Trim(), StringComparison.OrdinalIgnoreCase)
-            && char.ToUpperInvariant(actual.RingSetting) == char.ToUpperInvariant(expected.RingSetting)
-            && char.ToUpperInvariant(actual.InitialPosition) == char.ToUpperInvariant(expected.InitialPosition);
-    }
-
     private static EnigmaOutput RunMachine(string inputText, EnigmaSettings settings)
     {
-        var (leftWiring, _) = RotorDefinitions[settings.LeftRotor.RotorName];
-        var (middleWiring, middleNotch) = RotorDefinitions[settings.MiddleRotor.RotorName];
-        var (rightWiring, rightNotch) = RotorDefinitions[settings.RightRotor.RotorName];
-        string reflectorWiring = ReflectorDefinitions[settings.Reflector];
+        int leftPos = ToIndex(settings.Rotor1);
+        int middlePos = ToIndex(settings.Rotor2);
+        int rightPos = ToIndex(settings.Rotor3);
 
-        int leftPos = ToIndex(settings.LeftRotor.InitialPosition);
-        int middlePos = ToIndex(settings.MiddleRotor.InitialPosition);
-        int rightPos = ToIndex(settings.RightRotor.InitialPosition);
-
-        int leftRing = ToIndex(settings.LeftRotor.RingSetting);
-        int middleRing = ToIndex(settings.MiddleRotor.RingSetting);
-        int rightRing = ToIndex(settings.RightRotor.RingSetting);
-
-        int middleNotchIdx = ToIndex(middleNotch);
-        int rightNotchIdx = ToIndex(rightNotch);
+        int middleNotchIdx = ToIndex(MiddleRotorNotch);
+        int rightNotchIdx = ToIndex(RightRotorNotch);
 
         int[] plugboard = BuildPlugboardMap(settings.PlugboardPairs);
 
@@ -167,17 +138,17 @@ public class EnigmaSimService : IEnigmaSimService
             signal = plugboard[signal];
 
             // 2. Right -> Middle -> Left rotors (forward)
-            signal = PassForward(signal, rightWiring, rightPos, rightRing);
-            signal = PassForward(signal, middleWiring, middlePos, middleRing);
-            signal = PassForward(signal, leftWiring, leftPos, leftRing);
+            signal = PassForward(signal, RightRotorWiring, rightPos);
+            signal = PassForward(signal, MiddleRotorWiring, middlePos);
+            signal = PassForward(signal, LeftRotorWiring, leftPos);
 
-            // 3. Reflector
-            signal = reflectorWiring[signal] - 'A';
+            // 3. Reflector B
+            signal = ReflectorBWiring[signal] - 'A';
 
             // 4. Left -> Middle -> Right rotors (backward)
-            signal = PassBackward(signal, leftWiring, leftPos, leftRing);
-            signal = PassBackward(signal, middleWiring, middlePos, middleRing);
-            signal = PassBackward(signal, rightWiring, rightPos, rightRing);
+            signal = PassBackward(signal, LeftRotorWiring, leftPos);
+            signal = PassBackward(signal, MiddleRotorWiring, middlePos);
+            signal = PassBackward(signal, RightRotorWiring, rightPos);
 
             // 5. Plugboard out
             signal = plugboard[signal];
@@ -191,21 +162,19 @@ public class EnigmaSimService : IEnigmaSimService
         );
     }
 
-    private static int PassForward(int signal, string wiring, int position, int ringSetting)
+    private static int PassForward(int signal, string wiring, int position)
     {
-        int offset = (position - ringSetting + 26) % 26;
-        int contactIn = (signal + offset) % 26;
+        int contactIn = (signal + position) % 26;
         int contactOut = wiring[contactIn] - 'A';
-        return (contactOut - offset + 26) % 26;
+        return (contactOut - position + 26) % 26;
     }
 
-    private static int PassBackward(int signal, string wiring, int position, int ringSetting)
+    private static int PassBackward(int signal, string wiring, int position)
     {
-        int offset = (position - ringSetting + 26) % 26;
-        int contactIn = (signal + offset) % 26;
+        int contactIn = (signal + position) % 26;
         char targetChar = (char)('A' + contactIn);
         int contactOut = wiring.IndexOf(targetChar);
-        return (contactOut - offset + 26) % 26;
+        return (contactOut - position + 26) % 26;
     }
 
     private static int[] BuildPlugboardMap(IReadOnlyList<string> pairs)
@@ -220,6 +189,8 @@ public class EnigmaSimService : IEnigmaSimService
         {
             return map;
         }
+
+        bool[] used = new bool[26];
 
         foreach (string rawPair in pairs)
         {
@@ -236,8 +207,21 @@ public class EnigmaSimService : IEnigmaSimService
 
             int a = pair[0] - 'A';
             int b = pair[1] - 'A';
+
+            if (a == b)
+            {
+                continue;
+            }
+
+            if ((used[a] && map[a] != b) || (used[b] && map[b] != a))
+            {
+                throw new ArgumentException($"Conflicting plugboard connection for '{pair}'.");
+            }
+
             map[a] = b;
             map[b] = a;
+            used[a] = true;
+            used[b] = true;
         }
 
         return map;
@@ -246,14 +230,10 @@ public class EnigmaSimService : IEnigmaSimService
     private static EnigmaSettings GenerateRandomSettings()
     {
         var rng = Random.Shared;
-        string[] availableRotors = ["I", "II", "III", "IV", "V"];
-        rng.Shuffle(availableRotors);
 
-        var left = new RotorConfig(availableRotors[0], RandomLetter(rng), RandomLetter(rng));
-        var middle = new RotorConfig(availableRotors[1], RandomLetter(rng), RandomLetter(rng));
-        var right = new RotorConfig(availableRotors[2], RandomLetter(rng), RandomLetter(rng));
-
-        string reflector = rng.Next(2) == 0 ? "B" : "C";
+        char rotor1 = RandomLetter(rng);
+        char rotor2 = RandomLetter(rng);
+        char rotor3 = RandomLetter(rng);
 
         char[] alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".ToCharArray();
         rng.Shuffle(alphabet);
@@ -264,34 +244,17 @@ public class EnigmaSimService : IEnigmaSimService
             plugboardPairs.Add($"{alphabet[i]}{alphabet[i + 1]}");
         }
 
-        return new EnigmaSettings(left, middle, right, reflector, plugboardPairs);
+        return new EnigmaSettings(rotor1, rotor2, rotor3, plugboardPairs);
     }
 
     private static void ValidateSettings(EnigmaSettings settings)
     {
-        ValidateRotor(settings.LeftRotor, nameof(settings.LeftRotor));
-        ValidateRotor(settings.MiddleRotor, nameof(settings.MiddleRotor));
-        ValidateRotor(settings.RightRotor, nameof(settings.RightRotor));
+        ArgumentNullException.ThrowIfNull(settings);
 
-        if (!ReflectorDefinitions.ContainsKey(settings.Reflector))
-        {
-            throw new ArgumentException($"Unsupported reflector '{settings.Reflector}'. Valid options: B, C.");
-        }
-
+        _ = ToIndex(settings.Rotor1);
+        _ = ToIndex(settings.Rotor2);
+        _ = ToIndex(settings.Rotor3);
         _ = BuildPlugboardMap(settings.PlugboardPairs);
-    }
-
-    private static void ValidateRotor(RotorConfig rotor, string paramName)
-    {
-        ArgumentNullException.ThrowIfNull(rotor, paramName);
-
-        if (!RotorDefinitions.ContainsKey(rotor.RotorName))
-        {
-            throw new ArgumentException($"Unsupported rotor '{rotor.RotorName}'. Valid options: I, II, III, IV, V.", paramName);
-        }
-
-        _ = ToIndex(rotor.RingSetting);
-        _ = ToIndex(rotor.InitialPosition);
     }
 
     private static string NormalizeText(string text)
