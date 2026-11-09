@@ -1,4 +1,4 @@
-﻿@{
+@{
     var letters = Enumerable.Range('A', 26).Select(c => ((char)c).ToString()).ToList();
 }
 
@@ -11,7 +11,7 @@
                 <label for="lt-input">Text</label>
                 <textarea id="lt-input" rows="6" placeholder="ex: type text here"></textarea>
             </div>
-            <button type="button" class="lt-button">CONVERT</button>
+            <button type="button" id="btn-convert" class="lt-button">CONVERT</button>
         </div>
 
         <fieldset class="lt-letters">
@@ -43,7 +43,7 @@
                 {
                     <div class="lt-cell">
                         <span>@letters[i - 4]</span>
-                        <select id="lt-letter-@i" aria-label="Letter @i">
+                        <select id="lt-letter-@i" class="plugboard-select" data-letter="@letters[i - 4]" aria-label="Letter @letters[i - 4]">
                             <option value="">–</option>
                             @foreach (var l in letters)
                             {
@@ -56,3 +56,92 @@
         </fieldset>
     </section>
 </div>
+
+<script>
+    (function () {
+        // Keep plugboard dropdowns symmetric (if A -> B, then B -> A)
+        $('.plugboard-select').on('change', function () {
+            var sourceLetter = $(this).data('letter');
+            var targetLetter = $(this).val();
+
+            // Clear any existing partner that pointed to sourceLetter
+            $('.plugboard-select').each(function () {
+                var l = $(this).data('letter');
+                if (l !== sourceLetter && $(this).val() === sourceLetter) {
+                    $(this).val('');
+                }
+            });
+
+            if (targetLetter && targetLetter !== sourceLetter) {
+                // Clear any old partner of targetLetter
+                $('.plugboard-select').each(function () {
+                    var l = $(this).data('letter');
+                    if (l !== targetLetter && $(this).val() === targetLetter && l !== sourceLetter) {
+                        $(this).val('');
+                    }
+                });
+
+                $('.plugboard-select[data-letter="' + targetLetter + '"]').val(sourceLetter);
+            } else if (targetLetter === sourceLetter) {
+                $(this).val('');
+            }
+        });
+
+        $('#btn-convert').on('click', function () {
+            var text = $('#lt-input').val();
+            var rotor1 = $('#lt-letter-1').val();
+            var rotor2 = $('#lt-letter-2').val();
+            var rotor3 = $('#lt-letter-3').val();
+
+            var pairs = [];
+            var seen = {};
+            $('.plugboard-select').each(function () {
+                var from = $(this).data('letter');
+                var to = $(this).val();
+                if (to && from !== to && !seen[from] && !seen[to]) {
+                    pairs.push(from + to);
+                    seen[from] = true;
+                    seen[to] = true;
+                }
+            });
+
+            $.ajax({
+                url: '/Home/Convert',
+                type: 'POST',
+                contentType: 'application/json',
+                data: JSON.stringify({
+                    text: text,
+                    rotor1: rotor1,
+                    rotor2: rotor2,
+                    rotor3: rotor3,
+                    plugboardPairs: pairs
+                }),
+                success: function (res) {
+                    $('#lt-input').val(res.output);
+
+                    if (res.rotor1) $('#lt-letter-1').val(res.rotor1);
+                    if (res.rotor2) $('#lt-letter-2').val(res.rotor2);
+                    if (res.rotor3) $('#lt-letter-3').val(res.rotor3);
+
+                    $('.plugboard-select').val('');
+                    if (res.plugboardPairs) {
+                        res.plugboardPairs.forEach(function (pair) {
+                            if (pair && pair.length === 2) {
+                                var a = pair[0];
+                                var b = pair[1];
+                                $('.plugboard-select[data-letter="' + a + '"]').val(b);
+                                $('.plugboard-select[data-letter="' + b + '"]').val(a);
+                            }
+                        });
+                    }
+                },
+                error: function (xhr) {
+                    var msg = (xhr.responseJSON && xhr.responseJSON.error)
+                        ? xhr.responseJSON.error
+                        : 'An error occurred during conversion.';
+                    alert(msg);
+                }
+            });
+        });
+    })();
+</script>
