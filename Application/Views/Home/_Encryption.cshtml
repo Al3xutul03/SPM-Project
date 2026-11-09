@@ -1,0 +1,58 @@
+﻿@{
+    var letters = Enumerable.Range('A', 26).Select(c => ((char)c).ToString()).ToList();
+}
+
+<h2 class="converter-title">ENCRYPTION</h2>
+
+<div class="colleague-workspace">
+    <section class="card lt-converter" aria-label="Encryption Form">
+        <div class="lt-row">
+            <div class="lt-field">
+                <label for="lt-input">Text</label>
+                <textarea id="lt-input" rows="6" placeholder="ex: type text here"></textarea>
+            </div>
+            <button type="button" class="lt-button">CONVERT</button>
+        </div>
+
+        <fieldset class="lt-letters">
+            <legend class="lt-legend">Rotors</legend>
+
+            @* First 3 boxes *@
+            <div class="lt-grid lt-grid-first">
+                @for (int i = 1; i <= 3; i++)
+                {
+                    <div class="lt-cell">
+                        <span>@i</span>
+                        <select id="lt-letter-@i" aria-label="Rotor @i">
+                            <option value="">–</option>
+                            @foreach (var l in letters)
+                            {
+                                <option value="@l">@l</option>
+                            }
+                        </select>
+                    </div>
+                }
+            </div>
+
+            <div class="lt-divider" aria-hidden="true"></div>
+
+            @* Remaining 26 boxes for Plugboard *@
+            <h3 class="lt-subtitle">Plugboard</h3>
+            <div class="lt-grid">
+                @for (int i = 4; i <= 29; i++)
+                {
+                    <div class="lt-cell">
+                        <span>@letters[i - 4]</span>
+                        <select id="lt-letter-@i" aria-label="Letter @i">
+                            <option value="">–</option>
+                            @foreach (var l in letters)
+                            {
+                                <option value="@l">@l</option>
+                            }
+                        </select>
+                    </div>
+                }
+            </div>
+        </fieldset>
+    </section>
+</div>
