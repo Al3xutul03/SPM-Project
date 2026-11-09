@@ -6,6 +6,14 @@ namespace Tests;
 [TestClass]
 public class EnigmaSimServiceTests
 {
+    private static EnigmaSettings CreateSampleSettings() => new(
+        new RotorConfig("I", 'A', 'A'),
+        new RotorConfig("II", 'B', 'C'),
+        new RotorConfig("III", 'D', 'E'),
+        "B",
+        ["AB", "CD"]
+    );
+
     [TestMethod]
     public void Process_WithoutConfigure_ThrowsInvalidOperationException()
     {
@@ -19,7 +27,9 @@ public class EnigmaSimServiceTests
     {
         var service = new EnigmaSimService();
 
-        Assert.ThrowsExactly<InvalidOperationException>(() => service.IsCorrect("ATTACKATDAWN"));
+        Assert.ThrowsExactly<InvalidOperationException>(
+            () => service.IsCorrect("ATTACKATDAWN", CreateSampleSettings())
+        );
     }
 
     [TestMethod]
@@ -28,7 +38,9 @@ public class EnigmaSimServiceTests
         var service = new EnigmaSimService();
         service.Configure();
 
-        Assert.ThrowsExactly<InvalidOperationException>(() => service.IsCorrect("ATTACKATDAWN"));
+        Assert.ThrowsExactly<InvalidOperationException>(
+            () => service.IsCorrect("ATTACKATDAWN", service.CurrentSettings!)
+        );
     }
 
     [TestMethod]
@@ -59,13 +71,7 @@ public class EnigmaSimServiceTests
     public void Configure_WithCustomSettings_StoresProvidedSettings()
     {
         var service = new EnigmaSimService();
-        var customSettings = new EnigmaSettings(
-            new RotorConfig("I", 'A', 'A'),
-            new RotorConfig("II", 'B', 'C'),
-            new RotorConfig("III", 'D', 'E'),
-            "B",
-            ["AB", "CD"]
-        );
+        var customSettings = CreateSampleSettings();
 
         service.Configure(customSettings, RandomSettings: false);
 
@@ -111,27 +117,74 @@ public class EnigmaSimServiceTests
     }
 
     [TestMethod]
-    public void IsCorrect_WithMatchingGuess_ReturnsTrue()
+    public void IsCorrect_WithMatchingInputAndSettings_ReturnsTrue()
     {
         var service = new EnigmaSimService();
-        service.Configure(RandomSettings: true);
+        var initialSettings = CreateSampleSettings();
+        service.Configure(initialSettings, RandomSettings: false);
         _ = service.Process();
 
         string actualInput = service.LastInput!;
 
-        Assert.IsTrue(service.IsCorrect(actualInput));
-        Assert.IsTrue(service.IsCorrect(actualInput.ToLowerInvariant()));
-        Assert.IsTrue(service.IsCorrect($"  {actualInput}  "));
+        // Exact instance match
+        Assert.IsTrue(service.IsCorrect(actualInput, initialSettings));
+
+        // Equivalent settings with different casing and reversed plugboard pair order
+        var equivalentSettings = new EnigmaSettings(
+            new RotorConfig("i", 'a', 'a'),
+            new RotorConfig("ii", 'b', 'c'),
+            new RotorConfig("iii", 'd', 'e'),
+            "b",
+            ["DC", "BA"]
+        );
+        Assert.IsTrue(service.IsCorrect($"  {actualInput.ToLowerInvariant()}  ", equivalentSettings));
     }
 
     [TestMethod]
-    public void IsCorrect_WithWrongGuess_ReturnsFalse()
+    public void IsCorrect_WithWrongInputAndCorrectSettings_ReturnsFalse()
     {
         var service = new EnigmaSimService();
         service.Configure(RandomSettings: true);
         _ = service.Process();
 
-        Assert.IsFalse(service.IsCorrect("WRONGUESSXYZ"));
+        Assert.IsFalse(service.IsCorrect("WRONGUESSXYZ", service.CurrentSettings!));
+    }
+
+    [TestMethod]
+    public void IsCorrect_WithCorrectInputButWrongInitialPosition_ReturnsFalse()
+    {
+        var service = new EnigmaSimService();
+        var initialSettings = CreateSampleSettings();
+        service.Configure(initialSettings, RandomSettings: false);
+        _ = service.Process();
+
+        var wrongPositionSettings = initialSettings with
+        {
+            RightRotor = initialSettings.RightRotor with { InitialPosition = 'Z' }
+        };
+
+        Assert.IsFalse(service.IsCorrect(service.LastInput!, wrongPositionSettings));
+    }
+
+    [TestMethod]
+    public void IsCorrect_WithCorrectInputButWrongRotorOrPlugboard_ReturnsFalse()
+    {
+        var service = new EnigmaSimService();
+        var initialSettings = CreateSampleSettings();
+        service.Configure(initialSettings, RandomSettings: false);
+        _ = service.Process();
+
+        var wrongRotorSettings = initialSettings with
+        {
+            LeftRotor = initialSettings.LeftRotor with { RotorName = "IV" }
+        };
+        var wrongPlugboardSettings = initialSettings with
+        {
+            PlugboardPairs = ["AB", "EF"]
+        };
+
+        Assert.IsFalse(service.IsCorrect(service.LastInput!, wrongRotorSettings));
+        Assert.IsFalse(service.IsCorrect(service.LastInput!, wrongPlugboardSettings));
     }
 
     [TestMethod]
@@ -146,6 +199,8 @@ public class EnigmaSimServiceTests
 
         Assert.IsNull(service.LastInput);
         Assert.IsNull(service.LastOutput);
-        Assert.ThrowsExactly<InvalidOperationException>(() => service.IsCorrect("ANYTHING"));
+        Assert.ThrowsExactly<InvalidOperationException>(
+            () => service.IsCorrect("ANYTHING", service.CurrentSettings!)
+        );
     }
 }

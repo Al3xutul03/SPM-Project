@@ -66,17 +66,57 @@ public class EnigmaSimService : IEnigmaSimService
         return LastOutput.OutputText;
     }
 
-    public bool IsCorrect(string expectedInput)
+    public bool IsCorrect(string expectedInput, EnigmaSettings expectedSettings)
     {
         ArgumentNullException.ThrowIfNull(expectedInput);
+        ArgumentNullException.ThrowIfNull(expectedSettings);
 
-        if (LastOutput is null || LastInput is null)
+        if (CurrentSettings is null || LastOutput is null || LastInput is null)
         {
             throw new InvalidOperationException("Process() must be called before calling IsCorrect().");
         }
 
         string normalizedGuess = NormalizeText(expectedInput);
-        return string.Equals(normalizedGuess, LastInput, StringComparison.Ordinal);
+        return string.Equals(normalizedGuess, LastInput, StringComparison.Ordinal)
+            && AreSettingsEqual(CurrentSettings, expectedSettings);
+    }
+
+    private static bool AreSettingsEqual(EnigmaSettings actual, EnigmaSettings expected)
+    {
+        if (expected.LeftRotor is null || expected.MiddleRotor is null || expected.RightRotor is null || expected.Reflector is null)
+        {
+            return false;
+        }
+
+        if (!AreRotorsEqual(actual.LeftRotor, expected.LeftRotor) ||
+            !AreRotorsEqual(actual.MiddleRotor, expected.MiddleRotor) ||
+            !AreRotorsEqual(actual.RightRotor, expected.RightRotor))
+        {
+            return false;
+        }
+
+        if (!string.Equals(actual.Reflector.Trim(), expected.Reflector.Trim(), StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        try
+        {
+            int[] actualPlugboard = BuildPlugboardMap(actual.PlugboardPairs);
+            int[] expectedPlugboard = BuildPlugboardMap(expected.PlugboardPairs);
+            return actualPlugboard.AsSpan().SequenceEqual(expectedPlugboard);
+        }
+        catch (ArgumentException)
+        {
+            return false;
+        }
+    }
+
+    private static bool AreRotorsEqual(RotorConfig actual, RotorConfig expected)
+    {
+        return string.Equals(actual.RotorName.Trim(), expected.RotorName.Trim(), StringComparison.OrdinalIgnoreCase)
+            && char.ToUpperInvariant(actual.RingSetting) == char.ToUpperInvariant(expected.RingSetting)
+            && char.ToUpperInvariant(actual.InitialPosition) == char.ToUpperInvariant(expected.InitialPosition);
     }
 
     private static EnigmaOutput RunMachine(string inputText, EnigmaSettings settings)

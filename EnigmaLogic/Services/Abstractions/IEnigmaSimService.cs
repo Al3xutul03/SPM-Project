@@ -19,9 +19,10 @@ public interface IEnigmaSimService
     string Process();
 
     /// <summary>
-    /// Checks if the processed output matches the guessed input.
+    /// Checks if the guessed input and guessed initial machine settings match the actual simulation state.
     /// </summary>
     /// <param name="expectedInput">The plaintext input that is guessed.</param>
-    /// <returns>True if the input is correct, false otherwise.</returns>
-    bool IsCorrect(string expectedInput);
+    /// <param name="expectedSettings">The initial machine configuration that is guessed.</param>
+    /// <returns>True if both the input and initial machine settings are correct, false otherwise.</returns>
+    bool IsCorrect(string expectedInput, EnigmaSettings expectedSettings);
 }
