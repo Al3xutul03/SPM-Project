@@ -14,7 +14,7 @@ namespace EnigmaLogic.Services.Cryptography;
 /// <summary>Budget of the attack.</summary>
 public sealed record EnigmaCrackOptions
 {
-    /// <summary>Start positions kept by each rotor statistic (IoC and reciprocal) for the plugboard search.</summary>
+    /// <summary>Start positions kept by each scan statistic (IoC, reciprocal, tetragrams) for the plugboard search.</summary>
     public int CandidatesPerStatistic { get; init; } = 48;
 
     /// <summary>Passes of the quick IoC plugboard climb applied to every start position during the scan.</summary>
@@ -24,6 +24,12 @@ public sealed record EnigmaCrackOptions
     public int BatchSize { get; init; } = 16;
 
     public int MaxPlugPairs { get; init; } = 13;
+
+    /// <summary>
+    /// Log-likelihood cost (nats) a plugboard pair must earn before it is kept: about ln(325), the
+    /// information needed to name one pair. Stops short texts from collecting invented pairs.
+    /// </summary>
+    public double PairCostNats { get; init; } = 6.0;
 
     /// <summary>Normalized fitness (0 = random, 1 = training text) above which the search stops.</summary>
     public double AcceptFitness { get; init; } = 0.45;
@@ -272,8 +278,10 @@ internal sealed class EnigmaClaudeMachine
 
 /// <summary>
 /// Ciphertext-only attack on the project machine (rotors I-II-III, rings AAA, reflector B):
-/// scan of the 17,576 start positions (IoC and reciprocal statistic), then plugboard hill climbing
-/// with tetragram fitness. Reliable from roughly 150 letters with 10 plugs; short texts may yield a wrong key.
+/// scan of the 17,576 start positions (IoC, reciprocal statistic and plugboard-free tetragram score), then
+/// plugboard hill climbing with tetragram fitness and a cost per pair. Reliable from roughly 150 letters with
+/// 10 plugs; with few plugs much shorter texts work (17 letters without plugboard), while 40–100 letters with
+/// 5–10 plugs usually yield a wrong key.
 /// </summary>
 public sealed class EnigmaPredictClaudeService : IEnigmaPredictClaudeService
 {
@@ -341,25 +349,41 @@ public sealed class EnigmaPredictClaudeService : IEnigmaPredictClaudeService
         return ToVerifiedSettings(best!, clean, cipher);
     }
 
-    // Stage 1: score every start position by IoC and by the reciprocal statistic. Raw IoC is blind with
-    // 10 plugs on short texts; with climb = true each start first gets a short IoC plugboard climb.
+    // Stage 1: score every start position by IoC, by the reciprocal statistic and (cheap scan only) by the
+    // tetragram score without plugboard. Raw IoC is blind with 10 plugs on short texts; with climb = true
+    // each start first gets a short IoC plugboard climb.
     private int[] ScanStartPositions(byte[] cipher, ParallelOptions parallel, bool climb)
     {
         int capacity = Math.Max(1, _options.CandidatesPerStatistic);
         int sweeps = Math.Max(1, _options.ScanClimbSweeps);
         var scorer = new CoincidenceScorer();
+        NGramModel[] models = Models.Value;
+        int[] identity = Enumerable.Range(0, 26).ToArray();
         var coincidence = new List<(int Start, double Score)>();
         var reciprocal = new List<(int Start, double Score)>();
+        var language = new List<(int Start, double Score)>();
         object gate = new();
 
         Parallel.For(0, StartCount, parallel,
             () => (Worker: new Worker(cipher, parallel.CancellationToken),
                    Coincidence: new PriorityQueue<int, double>(capacity + 1),
-                   Reciprocal: new PriorityQueue<int, double>(capacity + 1)),
+                   Reciprocal: new PriorityQueue<int, double>(capacity + 1),
+                   Language: new PriorityQueue<int, double>(capacity + 1)),
             (start, loopState, local) =>
             {
                 local.Worker.BuildPath(start);
                 Offer(local.Reciprocal, start, local.Worker.ReciprocalScore(out _), capacity);
+
+                // With few plugs the plaintext already shows through: score it directly.
+                if (!climb)
+                {
+                    local.Worker.Decode(identity);
+                    double languageScore = double.MinValue;
+                    foreach (NGramModel model in models)
+                        languageScore = Math.Max(languageScore, model.Normalize(model.Score(local.Worker.Buffer)));
+                    Offer(local.Language, start, languageScore, capacity);
+                }
+
                 double coincidenceScore = climb
                     ? ClimbPlugboard(new Candidate(start), scorer, local.Worker, sweeps)
                     : local.Worker.CoincidenceSum();
@@ -372,16 +396,18 @@ public sealed class EnigmaPredictClaudeService : IEnigmaPredictClaudeService
                 {
                     coincidence.AddRange(local.Coincidence.UnorderedItems.Select(e => (e.Element, e.Priority)));
                     reciprocal.AddRange(local.Reciprocal.UnorderedItems.Select(e => (e.Element, e.Priority)));
+                    language.AddRange(local.Language.UnorderedItems.Select(e => (e.Element, e.Priority)));
                 }
             });
 
-        // Interleave both rankings so that each statistic contributes its best candidates early.
-        int[] byCoincidence = coincidence.OrderByDescending(e => e.Score).Take(capacity).Select(e => e.Start).ToArray();
-        int[] byReciprocal = reciprocal.OrderByDescending(e => e.Score).Take(capacity).Select(e => e.Start).ToArray();
-        return byReciprocal.Zip(byCoincidence, (a, b) => new[] { a, b })
-            .SelectMany(pair => pair)
-            .Concat(byReciprocal.Skip(byCoincidence.Length))
-            .Concat(byCoincidence.Skip(byReciprocal.Length))
+        // Interleave the rankings so that each statistic contributes its best candidates early.
+        // Ties are broken by start position, so the result does not depend on thread scheduling.
+        int[][] rankings = new[] { reciprocal, coincidence, language }
+            .Select(list => list.OrderByDescending(e => e.Score).ThenBy(e => e.Start).Take(capacity).Select(e => e.Start).ToArray())
+            .ToArray();
+        int longest = rankings.Max(r => r.Length);
+        return Enumerable.Range(0, longest)
+            .SelectMany(rank => rankings.Where(r => rank < r.Length).Select(r => r[rank]))
             .Distinct()
             .ToArray();
     }
@@ -398,6 +424,9 @@ public sealed class EnigmaPredictClaudeService : IEnigmaPredictClaudeService
         NGramModel[] models = Models.Value;
         worker.BuildPath(start);
 
+        // Scores are means per tetragram, so the cost of a pair is spread over the tetragrams of the text.
+        double pairPenalty = _options.PairCostNats / Math.Max(1, worker.Buffer.Length - 3);
+
         var seeded = new Candidate(start);
         SeedPlugboard(seeded, worker);
         ClimbPlugboard(seeded, new CoincidenceScorer(), worker);
@@ -408,7 +437,7 @@ public sealed class EnigmaPredictClaudeService : IEnigmaPredictClaudeService
             foreach (bool restart in new[] { false, true })
             {
                 Candidate attempt = restart ? new Candidate(start) : seeded.Clone();
-                double score = ClimbPlugboard(attempt, model, worker);
+                double score = ClimbPlugboard(attempt, model, worker, pairPenalty: pairPenalty);
                 attempt.Fitness = model.Normalize(score);
                 if (best is null || attempt.Fitness > best.Fitness) best = attempt;
             }
@@ -444,14 +473,14 @@ public sealed class EnigmaPredictClaudeService : IEnigmaPredictClaudeService
     /// best improvement, until a local optimum or <paramref name="maxSweeps"/> passes over all pairs.
     /// Expects the worker path to be built for the candidate.
     /// </summary>
-    private double ClimbPlugboard(Candidate candidate, TextScorer scorer, Worker worker, int maxSweeps = int.MaxValue)
+    private double ClimbPlugboard(Candidate candidate, TextScorer scorer, Worker worker, int maxSweeps = int.MaxValue, double pairPenalty = 0)
     {
         int[] plug = candidate.Plugboard;
         Span<int> saved = stackalloc int[26];
         Span<int> bestMove = stackalloc int[26];
 
         worker.Decode(plug);
-        double current = scorer.Score(worker.Buffer);
+        double current = scorer.Score(worker.Buffer) - pairPenalty * CountPairs(plug);
 
         bool improved = true;
         for (int sweep = 0; improved && sweep < maxSweeps; sweep++)
@@ -472,7 +501,7 @@ public sealed class EnigmaPredictClaudeService : IEnigmaPredictClaudeService
                     {
                         plug[a] = a;
                         plug[b] = b;
-                        TryMove(plug, scorer, worker, ref bestScore, ref found, bestMove);
+                        TryMove(plug, scorer, worker, pairPenalty, ref bestScore, ref found, bestMove);
                     }
                     else
                     {
@@ -481,13 +510,13 @@ public sealed class EnigmaPredictClaudeService : IEnigmaPredictClaudeService
                         plug[a] = b;
                         plug[b] = a;
                         if (CountPairs(plug) <= _options.MaxPlugPairs)
-                            TryMove(plug, scorer, worker, ref bestScore, ref found, bestMove);
+                            TryMove(plug, scorer, worker, pairPenalty, ref bestScore, ref found, bestMove);
 
                         if (partnerA != a && partnerB != b)
                         {
                             plug[partnerA] = partnerB;
                             plug[partnerB] = partnerA;
-                            TryMove(plug, scorer, worker, ref bestScore, ref found, bestMove);
+                            TryMove(plug, scorer, worker, pairPenalty, ref bestScore, ref found, bestMove);
                         }
                     }
 
@@ -508,10 +537,10 @@ public sealed class EnigmaPredictClaudeService : IEnigmaPredictClaudeService
         return current;
     }
 
-    private static void TryMove(int[] plug, TextScorer scorer, Worker worker, ref double bestScore, ref bool found, Span<int> bestMove)
+    private static void TryMove(int[] plug, TextScorer scorer, Worker worker, double pairPenalty, ref double bestScore, ref bool found, Span<int> bestMove)
     {
         worker.Decode(plug);
-        double score = scorer.Score(worker.Buffer);
+        double score = scorer.Score(worker.Buffer) - pairPenalty * CountPairs(plug);
         if (score > bestScore + Epsilon)
         {
             bestScore = score;
