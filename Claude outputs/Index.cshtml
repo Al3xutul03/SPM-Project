@@ -1,0 +1,68 @@
+@{
+    ViewData["Title"] = "Enigma Machine";
+}
+
+<div class="navigation-box">
+    <div class="nav-buttons">
+        <button class="nav-btn active" data-page="Encryption">Encryption</button>
+        <button class="nav-btn" data-page="DecryptionGrok">Decryption Grok</button>
+        <button class="nav-btn" data-page="DecryptionGemini">Decryption Gemini</button>
+        <button class="nav-btn" data-page="DecryptionGPT">Decryption ChatGpt</button>
+        <button class="nav-btn" data-page="DecryptionClaude">Decryption Claude</button>
+        <button class="nav-btn" data-page="DecryptionDeepSeek">Decryption DeepSeek</button>
+    </div>
+</div>
+
+<div class="converter-card" id="converter-content">
+    @* Se încarcă implicit prima pagină *@
+    @await Html.PartialAsync("_Encryption")
+</div>
+
+@section Scripts {
+    <script>
+        $(document).ready(function () {
+            $('.nav-btn').click(function () {
+                var pageName = $(this).data('page');
+
+                $('.nav-btn').removeClass('active');
+                $(this).addClass('active');
+
+                $.get('/Home/GetConverterPage', { page: pageName }, function (data) {
+                    $('#converter-content').html(data);
+                }).fail(function () {
+                    alert("A apărut o eroare la încărcarea paginii parțiale!");
+                });
+            });
+
+            // DeepSeek DECODE - handler delegat, pentru că partial-ul se încarcă prin AJAX
+            $(document).on('click', '#lt-decode-deepseek', function () {
+                var $btn = $(this);
+                var $out = $('#lt-plaintext-deepseek');
+                var token = $('#converter-content input[name="__RequestVerificationToken"]').val();
+
+                $btn.prop('disabled', true).text('DECODING...');
+                $out.val('');
+
+                $.post('/EnigmaDeepSeek/Decode', {
+                    ciphertext: $('#lt-ciphertext-deepseek').val(),
+                    __RequestVerificationToken: token
+                })
+                .done(function (res) {
+                    var s = res.settings;
+                    $out.val(res.plaintext +
+                        '\n\nRotors: ' + s.rotors +
+                        ' | Rings: ' + s.rings +
+                        ' | Positions: ' + s.positions +
+                        ' | Reflector: ' + s.reflector +
+                        ' | Plugboard: ' + s.plugboard);
+                })
+                .fail(function (xhr) {
+                    $out.val('Error ' + xhr.status + ': ' + (xhr.responseText || xhr.statusText));
+                })
+                .always(function () {
+                    $btn.prop('disabled', false).text('DECODE');
+                });
+            });
+        });
+    </script>
+}

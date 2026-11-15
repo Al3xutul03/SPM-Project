@@ -2,17 +2,19 @@
 
 <div class="colleague-workspace">
     <section class="card lt-converter" aria-label="Formular Decryption DeepSeek">
+        @Html.AntiForgeryToken()
+
         <!-- Caseta pentru textul codificat (Input) -->
         <div class="lt-row" style="margin-bottom: 20px;">
             <div class="lt-field" style="width: 100%;">
                 <label for="lt-ciphertext-deepseek">Ciphertext</label>
-                <textarea id="lt-ciphertext-deepseek" rows="5" placeholder="Enter the cipher here..."></textarea>
+                <textarea id="lt-ciphertext-deepseek" rows="5" placeholder="Enter the cipher here (min. 20 letters)..."></textarea>
             </div>
         </div>
 
         <!-- Butonul de conversie -->
         <div style="text-align: center; margin-bottom: 20px;">
-            <button type="button" class="lt-button">DECODE</button>
+            <button type="button" id="lt-decode-deepseek" class="lt-button">DECODE</button>
         </div>
 
         <!-- Caseta pentru textul decodificat (Output) -->
@@ -24,3 +26,36 @@
         </div>
     </section>
 </div>
+
+<script>
+    (function () {
+        $('#lt-decode-deepseek').on('click', function () {
+            var $btn = $(this);
+            var $out = $('#lt-plaintext-deepseek');
+            var token = $('.lt-converter input[name="__RequestVerificationToken"]').val();
+
+            $btn.prop('disabled', true).text('DECODING...');
+            $out.val('');
+
+            $.post('/EnigmaDeepSeek/Decode', {
+                ciphertext: $('#lt-ciphertext-deepseek').val(),
+                __RequestVerificationToken: token
+            })
+            .done(function (res) {
+                var s = res.settings;
+                $out.val(res.plaintext +
+                    '\n\nRotors: ' + s.rotors +
+                    ' | Rings: ' + s.rings +
+                    ' | Positions: ' + s.positions +
+                    ' | Reflector: ' + s.reflector +
+                    ' | Plugboard: ' + s.plugboard);
+            })
+            .fail(function (xhr) {
+                $out.val('Error ' + xhr.status + ': ' + (xhr.responseText || xhr.statusText));
+            })
+            .always(function () {
+                $btn.prop('disabled', false).text('DECODE');
+            });
+        });
+    })();
+</script>
