@@ -1,4 +1,8 @@
-﻿<h2 class="converter-title">DECRYPTION CHATGPT</h2>
+﻿@{
+    var letters = Enumerable.Range('A', 26).Select(c => ((char)c).ToString()).ToList();
+}
+
+<h2 class="converter-title">DECRYPTION CHATGPT</h2>
 
 <div class="colleague-workspace">
     <section class="card lt-converter" aria-label="Formular Decryption ChatGPT">
@@ -10,9 +14,10 @@
             </div>
         </div>
 
-        <!-- Butonul de conversie -->
+        <!-- Butoanele: criptanaliza automata sau decriptare cu cheia de mai jos -->
         <div style="text-align: center; margin-bottom: 20px;">
-            <button type="button" class="lt-button">DECODE</button>
+            <button type="button" id="lt-decode-gpt" class="lt-button">DECODE</button>
+            <button type="button" id="lt-decode-key-gpt" class="lt-button">DECRYPT WITH KEY</button>
         </div>
 
         <!-- Caseta pentru textul decodificat (Output) -->
@@ -22,5 +27,172 @@
                 <textarea id="lt-plaintext-gpt" rows="5" placeholder="The plaintext will appear here..." readonly style="background-color: #f9f6f0;"></textarea>
             </div>
         </div>
+
+        <!-- Cheia: completata automat dupa DECODE si memorata; poate fi editata manual -->
+        <fieldset class="lt-letters" style="margin-top: 20px;">
+            <legend class="lt-legend">Key</legend>
+            <p id="lt-key-status-gpt" style="margin-top: 0;">DECODE fills in the key it finds. Reuse it with DECRYPT WITH KEY for short messages from the same key.</p>
+
+            <div class="lt-grid lt-grid-first">
+                @for (int i = 1; i <= 3; i++)
+                {
+                    <div class="lt-cell">
+                        <span>@i</span>
+                        <select id="lt-rotor-gpt-@i" class="rotor-select-gpt" aria-label="Rotor @i">
+                            <option value="">–</option>
+                            @foreach (var l in letters)
+                            {
+                                <option value="@l">@l</option>
+                            }
+                        </select>
+                    </div>
+                }
+            </div>
+
+            <div class="lt-divider" aria-hidden="true"></div>
+
+            <h3 class="lt-subtitle">Plugboard</h3>
+            <div class="lt-grid">
+                @foreach (var letter in letters)
+                {
+                    <div class="lt-cell">
+                        <span>@letter</span>
+                        <select class="plugboard-select-gpt" data-letter="@letter" aria-label="Letter @letter">
+                            <option value="">–</option>
+                            @foreach (var l in letters)
+                            {
+                                <option value="@l">@l</option>
+                            }
+                        </select>
+                    </div>
+                }
+            </div>
+        </fieldset>
     </section>
 </div>
+
+<script>
+    (function () {
+        var storageKey = 'enigma-gpt-key';
+        var $output = $('#lt-plaintext-gpt');
+        var $status = $('#lt-key-status-gpt');
+        var $plugs = $('.plugboard-select-gpt');
+
+        function plugSelect(letter) {
+            return $plugs.filter('[data-letter="' + letter + '"]');
+        }
+
+        function readKey() {
+            var pairs = [];
+            $plugs.each(function () {
+                var from = $(this).data('letter');
+                var to = $(this).val();
+                if (to && from < to) pairs.push(from + to);
+            });
+            return {
+                rotor1: $('#lt-rotor-gpt-1').val(),
+                rotor2: $('#lt-rotor-gpt-2').val(),
+                rotor3: $('#lt-rotor-gpt-3').val(),
+                plugboardPairs: pairs
+            };
+        }
+
+        function writeKey(key) {
+            $('#lt-rotor-gpt-1').val(key.rotor1 || '');
+            $('#lt-rotor-gpt-2').val(key.rotor2 || '');
+            $('#lt-rotor-gpt-3').val(key.rotor3 || '');
+            $plugs.val('');
+            (key.plugboardPairs || []).forEach(function (pair) {
+                plugSelect(pair[0]).val(pair[1]);
+                plugSelect(pair[1]).val(pair[0]);
+            });
+        }
+
+        function saveKey() {
+            try { localStorage.setItem(storageKey, JSON.stringify(readKey())); } catch (e) { }
+        }
+
+        function describe(key, extraInfo) {
+            var plugs = key.plugboardPairs.length ? key.plugboardPairs.join(' ') : 'none';
+            var base = 'Rotors: ' + key.rotor1 + ' ' + key.rotor2 + ' ' + key.rotor3 + ' | Plugboard: ' + plugs;
+            return extraInfo ? base + ' | ' + extraInfo : base;
+        }
+
+        // Restore the key remembered from an earlier DECODE.
+        try {
+            var saved = JSON.parse(localStorage.getItem(storageKey) || 'null');
+            if (saved) {
+                writeKey(saved);
+                $status.text('Remembered key — ' + describe(readKey()));
+            }
+        } catch (e) { }
+
+        // Keep plugboard symmetric (if A -> B, then B -> A).
+        $plugs.on('change', function () {
+            var from = $(this).data('letter');
+            var to = $(this).val();
+            $plugs.each(function () {
+                if ($(this).val() === from && $(this).data('letter') !== to) $(this).val('');
+            });
+            if (to) {
+                var $partner = plugSelect(to);
+                var old = $partner.val();
+                if (old && old !== from) plugSelect(old).val('');
+                $partner.val(from);
+            }
+            saveKey();
+        });
+        $('.rotor-select-gpt').on('change', saveKey);
+
+        function showError(xhr, fallback) {
+            var message = xhr.responseJSON && xhr.responseJSON.error ? xhr.responseJSON.error : fallback;
+            $output.val('Error: ' + message);
+        }
+
+        // Ciphertext-only attack: finds the key, shows the plaintext and remembers the key.
+        $('#lt-decode-gpt').on('click', function () {
+            var $button = $(this);
+            $button.prop('disabled', true).text('DECODING...');
+            $output.val('');
+
+            $.ajax({
+                url: '/Home/DecryptChatGPT',
+                type: 'POST',
+                contentType: 'application/json',
+                data: JSON.stringify({ ciphertext: $('#lt-ciphertext-gpt').val() }),
+                success: function (result) {
+                    $output.val(result.plaintext);
+                    writeKey(result);
+                    saveKey();
+                    var extra = result.leftRotor
+                        ? ('Order: ' + result.leftRotor + '-' + result.middleRotor + '-' + result.rightRotor +
+                           ', IC: ' + Number(result.indexOfCoincidence || 0).toFixed(4))
+                        : '';
+                    $status.text('Found key — ' + describe(readKey(), extra));
+                },
+                error: function (xhr) { showError(xhr, 'Decryption failed.'); },
+                complete: function () { $button.prop('disabled', false).text('DECODE'); }
+            });
+        });
+
+        // Decrypts with the key in the panel (found earlier or typed in).
+        $('#lt-decode-key-gpt').on('click', function () {
+            var $button = $(this);
+            var key = readKey();
+            $button.prop('disabled', true);
+
+            $.ajax({
+                url: '/Home/DecryptChatGPTWithKey',
+                type: 'POST',
+                contentType: 'application/json',
+                data: JSON.stringify($.extend({ ciphertext: $('#lt-ciphertext-gpt').val() }, key)),
+                success: function (result) {
+                    $output.val(result.plaintext);
+                    $status.text('Decrypted with — ' + describe(key));
+                },
+                error: function (xhr) { showError(xhr, 'Decryption failed.'); },
+                complete: function () { $button.prop('disabled', false); }
+            });
+        });
+    })();
+</script>
