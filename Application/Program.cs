@@ -1,5 +1,6 @@
 using EnigmaLogic.Services;
 using EnigmaLogic.Services.Abstractions;
+using EnigmaLogic.Services.Cryptography;
 
 var builder = WebApplication.CreateBuilder(args);
 
