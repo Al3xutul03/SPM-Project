@@ -1,11 +1,11 @@
 using EnigmaLogic.Models;
 using EnigmaLogic.Services;
-using EnigmaLogic.Services.Cryptography;
+using Tests.EvaluationHarness;
 
 namespace Tests;
 
 [TestClass]
-public class EnigmaPredictClaudeServiceTests
+public class EnigmaPredictDeepSeekServiceTests
 {
     private const string GermanText =
         "Heute frueh hat die Vorhut den Bergpass erreicht ohne auf nennenswerten Widerstand zu stossen. " +
@@ -19,8 +19,8 @@ public class EnigmaPredictClaudeServiceTests
     [TestMethod]
     public void Machine_StandardVector_ProducesKnownCiphertext()
     {
-        var machine = new EnigmaClaudeMachine();
-        machine.Configure(new EnigmaSettings('A', 'A', 'A', []));
+        var machine = new EnigmaServiceDeepSeek();
+        machine.Configure(ProjectKey('A', 'A', 'A'), RandomSettings: false);
 
         Assert.AreEqual("BDZGO", machine.Process("AAAAA").OutputText);
     }
@@ -28,40 +28,30 @@ public class EnigmaPredictClaudeServiceTests
     [TestMethod]
     public void Machine_MiddleRotorOnNotch_DoubleSteps()
     {
-        var machine = new EnigmaClaudeMachine();
-        machine.Configure(new EnigmaSettings('A', 'D', 'U', []));
+        var machine = new EnigmaServiceDeepSeek();
+        machine.Configure(ProjectKey('A', 'D', 'U'), RandomSettings: false);
 
-        EnigmaOutput output = machine.Process("AAAA");
+        EnigmaOutputDeepSeek output = machine.Process("AAAA");
 
         Assert.AreEqual(('B', 'F', 'Y'), output.FinalRotorPositions);
     }
 
     [TestMethod]
-    public void Machine_Trace_MatchesProcessStepByStep()
+    public void Machine_SameSettingsTwice_IsReciprocal()
     {
-        var settings = new EnigmaSettings('A', 'D', 'U', []);
-        var machine = new EnigmaClaudeMachine();
-        machine.Configure(settings);
+        var machine = new EnigmaServiceDeepSeek();
+        machine.Configure(ProjectKey('Q', 'E', 'V', "AQ", "BY", "CU", "DK", "EP", "FT", "GW", "HN", "IX", "LR"), RandomSettings: false);
 
-        IReadOnlyList<EnigmaStepState> steps = machine.Trace("aa a!a");
+        string cipher = machine.Process(GermanText).OutputText;
 
-        Assert.HasCount(4, steps);
-        Assert.AreEqual(('A', 'D', 'V'), steps[0].RotorPositions);
-        Assert.AreEqual(('A', 'E', 'W'), steps[1].RotorPositions);
-        Assert.AreEqual(('B', 'F', 'X'), steps[2].RotorPositions);
-        Assert.AreEqual(('B', 'F', 'Y'), steps[3].RotorPositions);
-        Assert.IsTrue(steps.All(s => s.InputChar == 'A'));
-
-        var reference = new EnigmaClaudeMachine();
-        reference.Configure(settings);
-        Assert.AreEqual(reference.Process("AAAA").OutputText, new string(steps.Select(s => s.OutputChar).ToArray()));
+        Assert.AreEqual(EnigmaMachineDeepSeek.Sanitize(GermanText), machine.Process(cipher).OutputText);
     }
 
     [TestMethod]
     public void Machine_Barbarossa1941_DecryptsHistoricalMessage()
     {
-        var machine = new EnigmaClaudeMachine();
-        machine.Configure(FullKey("II", "IV", "V", "BUL", "BLA", "AV", "BS", "CG", "DL", "FU", "HZ", "IN", "KM", "OW", "RX"));
+        var machine = new EnigmaServiceDeepSeek();
+        machine.Configure(FullKey("II", "IV", "V", "BUL", "BLA", "AV", "BS", "CG", "DL", "FU", "HZ", "IN", "KM", "OW", "RX"), RandomSettings: false);
 
         string plain = machine.Process("EDPUD NRGYS ZRCXN UYTPO MRMBO FKTBZ REZKM LXLVE FGUEY SIOZV EQMIK UBPMM YLKLT TDEIS").OutputText;
 
@@ -74,18 +64,18 @@ public class EnigmaPredictClaudeServiceTests
         var settings = new EnigmaSettings('Q', 'E', 'V', ["AQ", "BY", "CU", "DK", "EP", "FT", "GW", "HN", "IX", "LR"]);
         var simulator = new EnigmaSimService();
         simulator.Configure(settings, RandomSettings: false);
-        var machine = new EnigmaClaudeMachine();
-        machine.Configure(settings);
+        var machine = new EnigmaServiceDeepSeek();
+        machine.Configure(DeepSeekCrackCandidate.FromProjectSettings(settings), RandomSettings: false);
 
         Assert.AreEqual(simulator.Process(GermanText), machine.Process(GermanText).OutputText);
     }
 
     [TestMethod]
-    public async Task CrackAsync_TextWithoutLetters_ThrowsArgumentException()
+    public async Task CrackAsync_TextWithoutLetters_ThrowsInvalidOperationException()
     {
-        var service = new EnigmaPredictClaudeService();
+        var service = new EnigmaPredictServiceDeepSeek();
 
-        await Assert.ThrowsExactlyAsync<ArgumentException>(() => service.CrackAsync("123 !?"));
+        await Assert.ThrowsExactlyAsync<InvalidOperationException>(() => service.CrackAsync("123 !?"));
     }
 
     [TestMethod]
@@ -97,28 +87,30 @@ public class EnigmaPredictClaudeServiceTests
         simulator.Configure(settings, RandomSettings: false);
         string cipher = simulator.Process(GermanText);
 
-        EnigmaSettings found = await new EnigmaPredictClaudeService().CrackAsync(cipher);
+        EnigmaSettingsDeepSeek found = await new EnigmaPredictServiceDeepSeek().CrackAsync(cipher);
 
-        Assert.AreEqual(('K', 'D', 'T'), (found.Rotor1, found.Rotor2, found.Rotor3));
+        Assert.AreEqual(("I", "II", "III"), (found.LeftRotor.RotorName, found.MiddleRotor.RotorName, found.RightRotor.RotorName));
+        Assert.AreEqual("UKW-B", found.Reflector);
+        Assert.AreEqual(('K', 'D', 'T'), (found.LeftRotor.InitialPosition, found.MiddleRotor.InitialPosition, found.RightRotor.InitialPosition));
         CollectionAssert.AreEquivalent(plugs, found.PlugboardPairs.ToArray());
 
-        var decoder = new EnigmaClaudeMachine();
-        decoder.Configure(found);
-        Assert.AreEqual(EnigmaClaudeMachine.Sanitize(GermanText), decoder.Process(cipher).OutputText);
+        var decoder = new EnigmaServiceDeepSeek();
+        decoder.Configure(found, RandomSettings: false);
+        Assert.AreEqual(EnigmaMachineDeepSeek.Sanitize(GermanText), decoder.Process(cipher).OutputText);
     }
 
     [TestMethod]
     public async Task CrackAsync_ShortMessageWithTenPlugs_RecoversSettings()
     {
         string[] plugs = ["AZ", "BX", "CW", "DV", "EU", "FT", "GS", "HR", "IQ", "JP"];
-        string plain = EnigmaClaudeMachine.Sanitize(GermanText)[..240];
+        string plain = EnigmaMachineDeepSeek.Sanitize(GermanText)[..240];
         var simulator = new EnigmaSimService();
         simulator.Configure(new EnigmaSettings('M', 'C', 'K', plugs), RandomSettings: false);
         string cipher = simulator.Process(plain);
 
-        EnigmaSettings found = await new EnigmaPredictClaudeService().CrackAsync(cipher);
+        EnigmaSettingsDeepSeek found = await new EnigmaPredictServiceDeepSeek().CrackAsync(cipher);
 
-        Assert.AreEqual(('M', 'C', 'K'), (found.Rotor1, found.Rotor2, found.Rotor3));
+        Assert.AreEqual(('M', 'C', 'K'), (found.LeftRotor.InitialPosition, found.MiddleRotor.InitialPosition, found.RightRotor.InitialPosition));
         CollectionAssert.AreEquivalent(plugs, found.PlugboardPairs.ToArray());
     }
 
@@ -126,16 +118,19 @@ public class EnigmaPredictClaudeServiceTests
     public async Task CrackAsync_CancelledToken_ThrowsOperationCanceledException()
     {
         using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(50));
-        var service = new EnigmaPredictClaudeService();
+        var service = new EnigmaPredictServiceDeepSeek();
 
         await Assert.ThrowsAsync<OperationCanceledException>(() => service.CrackAsync(GermanText, cts.Token));
     }
 
-    private static EnigmaKey FullKey(string left, string middle, string right, string rings, string positions, params string[] plugs) =>
+    private static EnigmaSettingsDeepSeek ProjectKey(char left, char middle, char right, params string[] plugs) =>
+        DeepSeekCrackCandidate.FromProjectSettings(new EnigmaSettings(left, middle, right, plugs));
+
+    private static EnigmaSettingsDeepSeek FullKey(string left, string middle, string right, string rings, string positions, params string[] plugs) =>
         new(
-            new RotorConfig(left, rings[0], positions[0]),
-            new RotorConfig(middle, rings[1], positions[1]),
-            new RotorConfig(right, rings[2], positions[2]),
-            "B",
+            new RotorConfigDeepSeek(left, rings[0], positions[0]),
+            new RotorConfigDeepSeek(middle, rings[1], positions[1]),
+            new RotorConfigDeepSeek(right, rings[2], positions[2]),
+            "UKW-B",
             plugs);
 }

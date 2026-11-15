@@ -9,6 +9,7 @@ builder.Services.AddSingleton<IEnigmaSimService, EnigmaSimService>();
 builder.Services.AddSingleton<IEnigmaServiceDeepSeek, EnigmaServiceDeepSeek>();
 builder.Services.AddSingleton<IEnigmaSimServiceDeepSeek, EnigmaSimServiceDeepSeek>();
 builder.Services.AddSingleton<IEnigmaPredictServiceDeepSeek, EnigmaPredictServiceDeepSeek>();
+builder.Services.AddSingleton<IEnigmaPredictClaudeService, EnigmaPredictClaudeService>();
 
 var app = builder.Build();
 

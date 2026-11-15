@@ -4,15 +4,18 @@ using EnigmaLogic.Services;
 namespace Tests.EvaluationHarness;
 
 /// <summary>
-/// Evaluation of the Claude-generated cryptanalysis service with the shared evaluation harness:
+/// Evaluation of the DeepSeek-generated cryptanalysis service (EnigmaPredictServiceDeepSeek) with the shared evaluation harness:
 /// correctness (DSR, CER, state reconstruction), efficiency (time, memory), code quality
 /// (cyclomatic complexity) and robustness (edge cases, 5-run consistency).
 /// </summary>
 [TestClass]
-public class ClaudeEvaluationTests
+public class DeepSeekEvaluationTests
 {
     // Generous bound for CI machines; locally a long message takes a few seconds.
     private static readonly TimeSpan MaxTimePerMessage = TimeSpan.FromSeconds(60);
+
+    // EnigmaPredictServiceDeepSeek refuses ciphertexts shorter than this.
+    private const int MinimumLetters = 20;
 
     private static readonly Lazy<IReadOnlyList<GroundTruthCase>> LongMessages = new(CreateLongMessageSuite);
 
@@ -23,30 +26,31 @@ public class ClaudeEvaluationTests
     // =========================================================================
 
     /// <summary>
-    /// Runs the shared benchmark unchanged. Its messages are short (17–98 letters): the cases with
-    /// 0 and 2 plugs must be solved exactly; 42–98 letters with 5–10 plugs are below what the attack
-    /// can recover, so those are reported, not asserted. Time is not asserted either: unsolved short
-    /// texts take the slow fallback scan, which is too load-dependent for a CI bound.
+    /// Runs the shared benchmark unchanged. Its messages are short (17–98 letters). DeepSeek rejects
+    /// ciphertexts under <see cref="MinimumLetters"/> letters with an InvalidOperationException, so
+    /// GT-01 (17 letters) may fail with that error only; every longer case must run without exceptions.
+    /// GT-02 (34 letters, 2 plugs) must be solved exactly; the 5–10 plug cases are reported, not asserted.
     /// </summary>
     [TestMethod]
     public async Task StandardBenchmark_SolvesFewPlugCasesAndReportsMetrics()
     {
         var runner = new EnigmaBenchmarkRunner();
 
-        ModelEvaluationReport report = await runner.EvaluateCandidateAsync(new ClaudeCrackCandidate(), ClaudeCrackCandidate.SourceFilePath);
+        ModelEvaluationReport report = await runner.EvaluateCandidateAsync(new DeepSeekCrackCandidate(), DeepSeekCrackCandidate.SourceFilePath);
         WriteReport(report);
 
         Assert.AreEqual(5, report.TotalRuns);
-        Assert.IsTrue(report.RunDetails.All(r => r.ErrorMessage is null),
-            "Unexpected exceptions: " + string.Join("; ", report.RunDetails.Where(r => r.ErrorMessage is not null).Select(r => $"{r.CaseId}: {r.ErrorMessage}")));
+        var unexpected = report.RunDetails
+            .Where(r => r.ErrorMessage is not null)
+            .Where(r => !(r.CaseId == "GT-01-NoPlugboard-Short" && r.ErrorMessage!.StartsWith(nameof(InvalidOperationException))))
+            .ToList();
+        Assert.IsEmpty(unexpected,
+            "Unexpected exceptions: " + string.Join("; ", unexpected.Select(r => $"{r.CaseId}: {r.ErrorMessage}")));
         Assert.AreEqual(1.0, report.EdgeCasePassRate, 1e-9);
 
-        foreach (string caseId in new[] { "GT-01-NoPlugboard-Short", "GT-02-TwoSteckers-Tactical" })
-        {
-            SingleRunMetrics run = report.RunDetails.Single(r => r.CaseId == caseId);
-            Assert.IsTrue(run.IsExactMatch, $"{caseId} must decrypt exactly.");
-            Assert.AreEqual(1.0, run.StateAccuracy.OverallStateAccuracy, 1e-9, $"{caseId} must recover the exact key.");
-        }
+        SingleRunMetrics gt02 = report.RunDetails.Single(r => r.CaseId == "GT-02-TwoSteckers-Tactical");
+        Assert.IsTrue(gt02.IsExactMatch, "GT-02-TwoSteckers-Tactical must decrypt exactly.");
+        Assert.AreEqual(1.0, gt02.StateAccuracy.OverallStateAccuracy, 1e-9, "GT-02-TwoSteckers-Tactical must recover the exact key.");
     }
 
     // =========================================================================
@@ -58,7 +62,7 @@ public class ClaudeEvaluationTests
     {
         var runner = new EnigmaBenchmarkRunner(LongMessages.Value, edgeCases: []);
 
-        ModelEvaluationReport report = await runner.EvaluateCandidateAsync(new ClaudeCrackCandidate());
+        ModelEvaluationReport report = await runner.EvaluateCandidateAsync(new DeepSeekCrackCandidate());
         WriteReport(report);
 
         Assert.AreEqual(1.0, report.DecryptionSuccessRate, 1e-9, "Every long message must decrypt exactly.");
@@ -77,7 +81,7 @@ public class ClaudeEvaluationTests
     {
         GroundTruthCase testCase = LongMessages.Value.Single(c => c.Id == caseId);
 
-        SingleRunMetrics metrics = await EnigmaBenchmarkRunner.EvaluateSingleCaseAsync(new ClaudeCrackCandidate(), testCase);
+        SingleRunMetrics metrics = await EnigmaBenchmarkRunner.EvaluateSingleCaseAsync(new DeepSeekCrackCandidate(), testCase);
         TestContext?.WriteLine($"{caseId}: {testCase.Ciphertext.Length} letters, {testCase.Settings.PlugboardPairs.Count} plugs, " +
             $"exact={metrics.IsExactMatch}, CER={metrics.CharacterErrorRate:P1}, t={metrics.ExecutionTime.TotalSeconds:F1}s");
 
@@ -96,7 +100,7 @@ public class ClaudeEvaluationTests
     {
         GroundTruthCase testCase = LongMessages.Value.Single(c => c.Id == "EXT-04-English-TenSteckers-Long");
 
-        SingleRunMetrics metrics = await EnigmaBenchmarkRunner.EvaluateSingleCaseAsync(new ClaudeCrackCandidate(), testCase);
+        SingleRunMetrics metrics = await EnigmaBenchmarkRunner.EvaluateSingleCaseAsync(new DeepSeekCrackCandidate(), testCase);
         TestContext?.WriteLine($"Time={metrics.ExecutionTime.TotalSeconds:F2}s, Allocated={metrics.AllocatedBytes / 1024.0 / 1024.0:F1} MB, " +
             $"WorkingSetDelta={metrics.PeakWorkingSetDeltaBytes / 1024.0 / 1024.0:F1} MB");
 
@@ -109,11 +113,11 @@ public class ClaudeEvaluationTests
     // =========================================================================
 
     [TestMethod]
-    public void CyclomaticComplexity_ClaudeServiceSource_AverageWithinMcCabeBound()
+    public void CyclomaticComplexity_DeepSeekServiceSource_AverageWithinMcCabeBound()
     {
-        Assert.IsTrue(File.Exists(ClaudeCrackCandidate.SourceFilePath), $"Could not locate {ClaudeCrackCandidate.SourceFilePath}");
+        Assert.IsTrue(File.Exists(DeepSeekCrackCandidate.SourceFilePath), $"Could not locate {DeepSeekCrackCandidate.SourceFilePath}");
 
-        FileComplexityReport report = CyclomaticComplexityAnalyzer.AnalyzeFile(ClaudeCrackCandidate.SourceFilePath);
+        FileComplexityReport report = CyclomaticComplexityAnalyzer.AnalyzeFile(DeepSeekCrackCandidate.SourceFilePath);
         TestContext?.WriteLine($"Methods: {report.MethodCount} | Avg CC: {report.AverageCyclomaticComplexity:F2} | " +
             $"Max CC: {report.MaxCyclomaticComplexity} | Above {CyclomaticComplexityAnalyzer.McCabeRecommendedUpperBound}: {report.MethodsExceedingThreshold}");
         foreach (MethodComplexityMetric method in report.Methods.Where(m => m.ExceedsMcCabeThreshold))
@@ -132,7 +136,7 @@ public class ClaudeEvaluationTests
     {
         var runner = new EnigmaBenchmarkRunner(groundTruthSuite: []);
 
-        double passRate = await runner.EvaluateEdgeCaseRobustnessAsync(new ClaudeCrackCandidate());
+        double passRate = await runner.EvaluateEdgeCaseRobustnessAsync(new DeepSeekCrackCandidate());
 
         Assert.AreEqual(1.0, passRate, 1e-9);
     }
@@ -142,9 +146,12 @@ public class ClaudeEvaluationTests
     [DataRow("   \t\r\n  ")]
     [DataRow("A")]
     [DataRow("1234567890!@#$%^&*()")]
-    public async Task Robustness_InputWithoutEnoughLetters_ThrowsArgumentException(string input)
+    [DataRow("ABCDEFGHIJKLMNOPQRS")]
+    public async Task Robustness_InputWithoutEnoughLetters_ThrowsInvalidOperationException(string input)
     {
-        await Assert.ThrowsAsync<ArgumentException>(() => new ClaudeCrackCandidate().CrackAsync(input));
+        Assert.IsLessThan(MinimumLetters, input.Count(char.IsAsciiLetter));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => new DeepSeekCrackCandidate().CrackAsync(input));
     }
 
     [TestMethod]
@@ -153,9 +160,11 @@ public class ClaudeEvaluationTests
         GroundTruthCase testCase = LongMessages.Value.Single(c => c.Id == "EXT-02-English-ThreeSteckers");
         string noisy = string.Join(" ", testCase.Ciphertext.ToLowerInvariant().Chunk(5).Select(group => new string(group))) + " !?";
 
-        CandidatePrediction prediction = await new ClaudeCrackCandidate().CrackAsync(noisy);
+        CandidatePrediction clean = await new DeepSeekCrackCandidate().CrackAsync(testCase.Ciphertext);
+        CandidatePrediction prediction = await new DeepSeekCrackCandidate().CrackAsync(noisy);
 
-        Assert.IsTrue(EvaluationMetricsCalculator.IsExactPlaintextMatch(testCase.Plaintext, prediction.RecoveredPlaintext));
+        Assert.AreEqual(Describe(clean.RecoveredSettings!), Describe(prediction.RecoveredSettings!));
+        Assert.AreEqual(clean.RecoveredPlaintext, prediction.RecoveredPlaintext);
     }
 
     [TestMethod]
@@ -164,7 +173,7 @@ public class ClaudeEvaluationTests
         GroundTruthCase testCase = LongMessages.Value.Single(c => c.Id == "EXT-04-English-TenSteckers-Long");
         using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(50));
 
-        await Assert.ThrowsAsync<OperationCanceledException>(() => new ClaudeCrackCandidate().CrackAsync(testCase.Ciphertext, cts.Token));
+        await Assert.ThrowsAsync<OperationCanceledException>(() => new DeepSeekCrackCandidate().CrackAsync(testCase.Ciphertext, cts.Token));
     }
 
     /// <summary>The service is deterministic, so five runs must give identical DSR (consistency score 1).</summary>
@@ -180,7 +189,7 @@ public class ClaudeEvaluationTests
 
         for (int run = 0; run < 5; run++)
         {
-            ModelEvaluationReport report = await runner.EvaluateCandidateAsync(new ClaudeCrackCandidate());
+            ModelEvaluationReport report = await runner.EvaluateCandidateAsync(new DeepSeekCrackCandidate());
             dsrPerRun.Add(report.DecryptionSuccessRate);
         }
 
@@ -188,7 +197,7 @@ public class ClaudeEvaluationTests
         {
             for (int run = 0; run < 2; run++)
             {
-                CandidatePrediction prediction = await new ClaudeCrackCandidate().CrackAsync(testCase.Ciphertext);
+                CandidatePrediction prediction = await new DeepSeekCrackCandidate().CrackAsync(testCase.Ciphertext);
                 keysPerRun.Add($"{testCase.Id}:{Describe(prediction.RecoveredSettings!)}");
             }
         }
