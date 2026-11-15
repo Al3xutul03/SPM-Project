@@ -1,11 +1,13 @@
 using EnigmaLogic.Services;
 using EnigmaLogic.Services.Abstractions;
+using EnigmaLogic.Services.Cryptography;
 
 var builder = WebApplication.CreateBuilder(args);
 
 // Add services to the container.
 builder.Services.AddControllersWithViews();
 builder.Services.AddSingleton<IEnigmaSimService, EnigmaSimService>();
+builder.Services.AddSingleton<IEnigmaPredictGeminiService, EnigmaPredictGeminiService>();
 
 var app = builder.Build();
 
@@ -28,6 +30,5 @@ app.MapControllerRoute(
     name: "default",
     pattern: "{controller=Home}/{action=Index}/{id?}")
     .WithStaticAssets();
-
 
 app.Run();

@@ -12,15 +12,59 @@
 
         <!-- Butonul de conversie -->
         <div style="text-align: center; margin-bottom: 20px;">
-            <button type="button" class="lt-button">DECODE</button>
+            <button type="button" id="lt-decode-gemini" class="lt-button">DECODE</button>
         </div>
 
         <!-- Caseta pentru textul decodificat (Output) -->
-        <div class="lt-row">
+        <div class="lt-row" style="margin-bottom: 15px;">
             <div class="lt-field" style="width: 100%;">
                 <label for="lt-plaintext-gemini">Plaintext</label>
                 <textarea id="lt-plaintext-gemini" rows="5" placeholder="The plaintext will appear here..." readonly style="background-color: #f9f6f0;"></textarea>
             </div>
         </div>
+
+        <!-- Afișarea cheii găsite -->
+        <div class="lt-row">
+            <p id="lt-settings-gemini" style="font-weight: bold; color: #333; text-align: center; display: none;"></p>
+        </div>
     </section>
 </div>
+
+<script>
+    (function () {
+        $('#lt-decode-gemini').off('click').on('click', function () {
+            const ciphertext = $('#lt-ciphertext-gemini').val();
+            const $btn = $(this);
+            const $plaintext = $('#lt-plaintext-gemini');
+            const $settings = $('#lt-settings-gemini');
+
+            if (!ciphertext || !ciphertext.trim()) {
+                $plaintext.val('Error: Please enter ciphertext.');
+                return;
+            }
+
+            $btn.prop('disabled', true).text('DECODING...');
+            $plaintext.val('');
+            $settings.hide().text('');
+
+            $.ajax({
+                url: '/Home/DecryptGemini',
+                type: 'POST',
+                contentType: 'application/json',
+                data: JSON.stringify({ ciphertext: ciphertext }),
+                success: function (response) {
+                    $plaintext.val(response.plaintext);
+                    const pb = response.plugboardPairs ? response.plugboardPairs.join(' ') : 'None';
+                    $settings.text(`Rotors: ${response.rotor1} ${response.rotor2} ${response.rotor3} | Plugboard: ${pb}`).show();
+                },
+                error: function (xhr) {
+                    const err = xhr.responseJSON && xhr.responseJSON.error ? xhr.responseJSON.error : 'An error occurred during decryption.';
+                    $plaintext.val('Error: ' + err);
+                },
+                complete: function () {
+                    $btn.prop('disabled', false).text('DECODE');
+                }
+            });
+        });
+    })();
+</script>

@@ -8,10 +8,12 @@ namespace ArhivaConvertoarelor.Controllers
     public class HomeController : Controller
     {
         private readonly IEnigmaSimService _enigmaService;
+        private readonly IEnigmaPredictGeminiService _geminiPredictService;
 
-        public HomeController(IEnigmaSimService enigmaService)
+        public HomeController(IEnigmaSimService enigmaService, IEnigmaPredictGeminiService geminiPredictService)
         {
             _enigmaService = enigmaService;
+            _geminiPredictService = geminiPredictService;
         }
 
         public IActionResult Index()
@@ -75,6 +77,44 @@ namespace ArhivaConvertoarelor.Controllers
                 return BadRequest(new { error = ex.Message });
             }
         }
+
+        [HttpPost]
+        public async Task<IActionResult> DecryptGemini([FromBody] GeminiDecryptRequest request)
+        {
+            try
+            {
+                using var cts = CancellationTokenSource.CreateLinkedTokenSource(HttpContext.RequestAborted);
+                cts.CancelAfter(TimeSpan.FromSeconds(60));
+
+                var settings = await _geminiPredictService.CrackAsync(request.Ciphertext ?? string.Empty, cts.Token);
+
+                // Decriptare efectivă folosind o instanță nouă de EnigmaSimService configurată cu setările prezise
+                var decryptor = new EnigmaSimService();
+                decryptor.Configure(settings, RandomSettings: false);
+                string plaintext = decryptor.Process(request.Ciphertext);
+
+                return Json(new
+                {
+                    plaintext,
+                    rotor1 = settings.Rotor1.ToString(),
+                    rotor2 = settings.Rotor2.ToString(),
+                    rotor3 = settings.Rotor3.ToString(),
+                    plugboardPairs = settings.PlugboardPairs
+                });
+            }
+            catch (OperationCanceledException)
+            {
+                return BadRequest(new { error = "Decryption took too long and was stopped." });
+            }
+            catch (ArgumentException ex)
+            {
+                return BadRequest(new { error = ex.Message });
+            }
+            catch (Exception ex)
+            {
+                return BadRequest(new { error = ex.Message });
+            }
+        }
     }
 
     public record ConvertRequest(
@@ -83,5 +123,9 @@ namespace ArhivaConvertoarelor.Controllers
         string? Rotor2,
         string? Rotor3,
         List<string>? PlugboardPairs
+    );
+
+    public record GeminiDecryptRequest(
+        string? Ciphertext
     );
 }
