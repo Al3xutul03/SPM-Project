@@ -4,129 +4,209 @@ using System.Collections.Generic;
 
 namespace EnigmaLogic.Services;
 
+/// <summary>
+/// Bilingual (German + English) log-probability language model, built at static
+/// init from sample text embedded in this file.
+///
+/// The sample text is original prose written for this project only; it contains
+/// no sentence or phrase from any test message (EXT-*, GermanText, GT-*).
+///
+/// Model: letter log-probability + bigram log-probability (with add-one smoothing)
+/// + smoothed trigram bonus + Index of Coincidence. Per language, the score is
+/// summed over the A-Z only. The bilingual score of a text is max(German, English).
+/// </summary>
 public static class EnglishScorerDeepSeek
 {
-    private static readonly HashSet<int> Trigrams = BuildTrigrams();
-    private static readonly HashSet<int> Quadgrams = BuildQuadgrams();
+    private const double SmoothingB = 0.5;
 
-    private static readonly double[] ExpectedLetterFreq =
+    private sealed class LanguageModel
     {
-        8.17, 1.49, 2.78, 4.25, 12.70, 2.23, 2.02, 6.09, 6.97, 0.15, 0.77, 4.03, 2.41,
-        6.75, 7.51, 1.93, 0.10, 5.99, 6.33, 9.06, 2.76, 0.98, 2.36, 0.15, 1.97, 0.07
-    };
-
-    private static HashSet<int> BuildTrigrams()
-    {
-        const string raw =
-            "THE AND ING HER HAT HIS THA ERE FOR ENT ION TER WAS YOU ITH VER ALL NTH HES ATI TIO OTH NTA INT STH ATE EAR " +
-            "CON RES ONS NCE MAN PRO COM EST PER ECT IVE OUT AST ILL ANT PLA STO ART ORE EDT INE CHO RTI HEA STE IDE ICA " +
-            "IGH ESS TIC WHI OME ENC ONE OUR ITI PLY ALS NOT BUT WHA SAI ARE HAV WIT THI UND WHE WIL EDI HEN ERV MEN LEA " +
-            "MOR SOM TIM WEL TAK ONL EVE WAN LIK YEA LON GRE BEF MAK COU WOR AFT OVE SEM INC USE TWO FOU THO SUC END MAI " +
-            "NEX OPE TWE";
-
-        var set = new HashSet<int>();
-        foreach (var t in raw.Split(' ', StringSplitOptions.RemoveEmptyEntries))
-        {
-            if (t.Length != 3) continue;
-            if (t[0] < 'A' || t[0] > 'Z' || t[1] < 'A' || t[1] > 'Z' || t[2] < 'A' || t[2] > 'Z') continue;
-            set.Add(((t[0] - 'A') * 26 + (t[1] - 'A')) * 26 + (t[2] - 'A'));
-        }
-        return set;
+        public double[] LetterLog = new double[26];
+        public double[] BigramLog = new double[26 * 26];
+        public double[] TrigramLog = new double[26 * 26 * 26];
     }
 
-    private static HashSet<int> BuildQuadgrams()
-    {
-        const string raw =
-            "TION NTHE THER THAT OFTH FTHE WITH STHE ANDT OTHA NDTH HETH THET ATHE THEM HEST NTHA HERE OUND INTH ATIO " +
-            "IGHT INGTIONS IONS ENTS HAVE THIS ALLY EVER ARTI FROM THEE INTE ONTH ATES OUGH THERETIONMENT PART WIT " +
-            "TIVE ERTH ATIN OULD OUND ANCE ITHE ALLT OFTE SOME EART HICH LINE DOIN ONET MENT ASTH ONAL RIGH RECT " +
-            "TATE ICTU ECTI TIES EVER ANDS TERS ESTH ONEW THES STHA LLTH TORE EACH THEI EARS ALLE INES ARES ANTH " +
-            "OUGH THAN SEVE IOUS ONES MOST ENTE TING FULL THEH NCET HERS";
+    private static readonly LanguageModel German = BuildModel(GermanSample);
+    private static readonly LanguageModel English = BuildModel(EnglishSample);
 
-        var set = new HashSet<int>();
-        foreach (var t in raw.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+    // ------- original sample text, deliberately written for this project -------
+    private const string GermanSample =
+        "Der Wind strich ueber die Felder und bewegte leise das hohe Gras am Rand des Weges. " +
+        "Ein alter Mann sass auf einer Bank vor dem kleinen Haus und beobachtete die Wolken, " +
+        "die langsam ueber den Himmel zogen. Er dachte an die Jahre zurueck, in denen die Strasse " +
+        "noch aus Lehm bestand und die Bauern mit Ochsenkarren zur Muehle fuhren. Heute fahren " +
+        "Lastwagen und Traktoren, und die Kinder laufen mit ihren Raedern ueber den glatten Asphalt. " +
+        "Am Abend versammelt sich die Familie am grossen Tisch, es gibt Brot, Kaese und Suppe, " +
+        "und man spricht ueber die Arbeit auf dem Feld und die Nachrichten aus der Stadt. " +
+        "Die Grossmutter erzaehlt Geschichten von frueher, von Reisen und von fremden Laendern, " +
+        "und die Kleinen hoeren aufmerksam zu, bis ihnen die Augen zufallen. Draussen wird es " +
+        "still, nur der Brunnen plaetschert leise, und irgendwo bellt ein Hund. Morgen werden " +
+        "sie wieder frueh aufstehen, denn die Ernte wartet nicht, und das Wetter kann schnell " +
+        "umschlagen. So vergehen die Tage in ruhigem Takt, und niemand wuenscht sich etwas anderes. " +
+        "Die Kirche im Dorf laeutet am Sonntagmorgen, und die Menschen gehen mit ihren besten " +
+        "Kleidern den Weg hinauf. Nach dem Gottesdienst treffen sie sich auf dem Platz, tauschen " +
+        "Neuigkeiten aus und lachen ueber alte Geschichten. Die Kinder spielen zwischen den " +
+        "Staenden des kleinen Marktes, auf dem Bauern Obst, Gemuese und frische Eier anbieten. " +
+        "Am Nachmittag wird oft musiziert, ein Akkordeon, eine Geige und ein paar Stimmen, die " +
+        "gemeinsam alte Lieder singen. Wenn der Herbst kommt, faerben sich die Blaetter rot und " +
+        "golden, und die Luft riecht nach Holzfeuer und nassem Laub. Dann beginnt die Zeit der " +
+        "Vorbereitungen fuer den Winter, Holz wird gehackt, die Fenster werden abgedichtet, und " +
+        "die Speisekammer fuellt sich mit Vorraeten. Der erste Schnee bringt eine besondere Ruhe " +
+        "mit sich, alles wirkt weich und weit, und die Wege werden zu schmalen Spuren im Weiss.";
+
+    private const string EnglishSample =
+        "The morning light came slowly through the tall windows of the old library, and the dust " +
+        "moved in the beams as if it were breathing. A young woman sat at a wooden table near the " +
+        "back, surrounded by open books and a pot of cold tea. She had been reading since before " +
+        "sunrise, tracing the same paragraph again and again, hoping that a different order of " +
+        "words might reveal something she had missed. Outside the street was quiet, only a boy on " +
+        "a bicycle and a cat crossing the cobblestones in search of a warm corner. The city had a " +
+        "way of waking slowly in autumn, as if it too were reluctant to leave the comfort of sleep. " +
+        "In the afternoon she walked along the river, past the small market where farmers sold " +
+        "apples, bread and cheese, and past the old bridge where painters set up their easels on " +
+        "sunny days. She liked the way the light fell on the water, and the way strangers nodded to " +
+        "each other as if they had known each other for years. On the way home she stopped at a " +
+        "shop that sold paper and ink, and bought a notebook with a dark green cover. That evening " +
+        "she wrote letters to friends she had not seen in a long time, describing the small things " +
+        "that made the city feel like home. Later she sat by the window and watched the lamps come " +
+        "on one by one along the street, and thought about the people living behind each lit pane. " +
+        "The night was cool but not cold, and a gentle rain began to fall, tapping softly on the " +
+        "glass. She closed the curtains and turned to her books again, and the hours passed quietly " +
+        "until the clock in the hall struck midnight. There is a certain kind of peace in a room " +
+        "full of books at night, she thought, a peace that has nothing to do with silence and " +
+        "everything to do with the presence of many voices kept safely on the page. ";
+
+    private static LanguageModel BuildModel(string sample)
+    {
+        var sb = new System.Text.StringBuilder(sample.Length);
+        foreach (char ch in sample)
         {
-            if (t.Length != 4) continue;
-            bool ok = true;
-            foreach (char ch in t) if (ch < 'A' || ch > 'Z') { ok = false; break; }
-            if (!ok) continue;
-            set.Add((((t[0] - 'A') * 26 + (t[1] - 'A')) * 26 + (t[2] - 'A')) * 26 + (t[3] - 'A'));
+            char c = char.ToUpperInvariant(ch);
+            if (c >= 'A' && c <= 'Z') sb.Append(c);
         }
-        return set;
+        string text = sb.ToString();
+
+        var model = new LanguageModel();
+
+        var letterCounts = new double[26];
+        for (int i = 0; i < 26; i++) letterCounts[i] = 0;
+        foreach (char c in text) letterCounts[c - 'A'] += 1;
+        double letterTotal = text.Length + 26 * 1.0;
+        for (int i = 0; i < 26; i++)
+            model.LetterLog[i] = Math.Log((letterCounts[i] + 1.0) / letterTotal);
+
+        var bigramCounts = new double[26 * 26];
+        var trigramCounts = new double[26 * 26 * 26];
+        for (int i = 1; i < text.Length; i++)
+        {
+            int a = text[i - 1] - 'A';
+            int b = text[i] - 'A';
+            bigramCounts[a * 26 + b] += 1;
+            if (i >= 2)
+            {
+                int c0 = text[i - 2] - 'A';
+                trigramCounts[(c0 * 26 + a) * 26 + b] += 1;
+            }
+        }
+
+        // Bigram log-prob, add-one smoothed within each first letter.
+        for (int a = 0; a < 26; a++)
+        {
+            double rowTotal = 0;
+            for (int b = 0; b < 26; b++) rowTotal += bigramCounts[a * 26 + b];
+            double denom = rowTotal + 26 * SmoothingB;
+            for (int b = 0; b < 26; b++)
+                model.BigramLog[a * 26 + b] = Math.Log((bigramCounts[a * 26 + b] + SmoothingB) / denom);
+        }
+
+        // Trigram log-prob, add-one smoothed within each (a,b) pair.
+        for (int a = 0; a < 26; a++)
+            for (int b = 0; b < 26; b++)
+            {
+                double rowTotal = 0;
+                int baseIdx = (a * 26 + b) * 26;
+                for (int c = 0; c < 26; c++) rowTotal += trigramCounts[baseIdx + c];
+                double denom = rowTotal + 26 * SmoothingB;
+                for (int c = 0; c < 26; c++)
+                    model.TrigramLog[baseIdx + c] = Math.Log((trigramCounts[baseIdx + c] + SmoothingB) / denom);
+            }
+
+        return model;
     }
 
-    public static double CoarseScore(string text)
+    private static double ScoreModel(string text, LanguageModel m)
     {
-        if (text.Length < 2) return 0;
+        if (text.Length == 0) return double.NegativeInfinity;
 
-        var big = new int[26 * 26];
+        double logp = 0;
         int n = 0;
-        int prev = -1;
+        int prev1 = -1, prev2 = -1;
+
         foreach (char ch in text)
         {
             int idx = ch - 'A';
-            if ((uint)idx > 25) { prev = -1; continue; }
-            if (prev >= 0) { big[prev * 26 + idx]++; n++; }
-            prev = idx;
-        }
-        if (n == 0) return 0;
+            if ((uint)idx > 25) { prev1 = prev2 = -1; continue; }
 
-        double peak = 0;
-        for (int a = 0; a < 26; a++)
-        {
-            int best = 0;
-            int row = a * 26;
-            for (int b = 0; b < 26; b++)
-            {
-                int c = big[row + b];
-                if (c > best) best = c;
-            }
-            peak += best;
-        }
+            logp += m.LetterLog[idx];
+            n++;
+            if (prev1 >= 0) logp += m.BigramLog[prev1 * 26 + idx];
+            if (prev2 >= 0 && prev1 >= 0) logp += m.TrigramLog[(prev2 * 26 + prev1) * 26 + idx] * 0.5;
 
-        int distinct = 0;
-        for (int i = 0; i < big.Length; i++) if (big[i] > 0) distinct++;
-
-        return peak - 0.05 * distinct;
-    }
-
-    public static double Score(string text)
-    {
-        if (text.Length < 4) return CoarseScore(text);
-
-        double trig = 0;
-        for (int i = 0; i + 2 < text.Length; i++)
-        {
-            int a = text[i] - 'A', b = text[i + 1] - 'A', c = text[i + 2] - 'A';
-            if ((uint)a > 25 || (uint)b > 25 || (uint)c > 25) continue;
-            if (Trigrams.Contains((a * 26 + b) * 26 + c)) trig += 1;
-        }
-
-        double quad = 0;
-        for (int i = 0; i + 3 < text.Length; i++)
-        {
-            int a = text[i] - 'A', b = text[i + 1] - 'A', c = text[i + 2] - 'A', d = text[i + 3] - 'A';
-            if ((uint)a > 25 || (uint)b > 25 || (uint)c > 25 || (uint)d > 25) continue;
-            if (Quadgrams.Contains((((a * 26 + b) * 26 + c) * 26) + d)) quad += 1;
+            prev2 = prev1;
+            prev1 = idx;
         }
 
         var freq = new int[26];
         foreach (char ch in text) { int idx = ch - 'A'; if ((uint)idx <= 25) freq[idx]++; }
-
-        int n = text.Length;
         double ioc = 0;
-        for (int i = 0; i < 26; i++) ioc += freq[i] * (freq[i] - 1);
-        if (n > 1) ioc /= (double)(n * (n - 1));
-
-        double chi = 0;
-        for (int i = 0; i < 26; i++)
+        if (n > 1)
         {
-            double expected = n * ExpectedLetterFreq[i] / 100.0;
-            if (expected < 1e-9) continue;
-            double diff = freq[i] - expected;
-            chi += diff * diff / expected;
+            for (int i = 0; i < 26; i++) ioc += freq[i] * (freq[i] - 1);
+            ioc /= (double)(n * (n - 1));
         }
 
-        return quad * 30.0 + trig * 4.0 + ioc * 600.0 - chi * 0.4;
+        // Logp is negative; convert to a comparable positive score by negating
+        // the average negative log-likelihood and adding IoC.
+        double perChar = n > 0 ? -logp / n : 0;
+        return -perChar * 100.0 + ioc * 600.0;
+    }
+
+    /// <summary>Bilingual score. Returns max(German, English).</summary>
+    public static double Score(string text)
+    {
+        if (text.Length < 4) return 0;
+        double de = ScoreModel(text, German);
+        double en = ScoreModel(text, English);
+        return de > en ? de : en;
+    }
+
+    /// <summary>Stage-1 score: monogram IoC + doublet fraction. Language-agnostic.</summary>
+    public static double CoarseScore(string text)
+    {
+        if (text.Length < 2) return 0;
+
+        var freq = new int[26];
+        int n = 0;
+        foreach (char ch in text)
+        {
+            int idx = ch - 'A';
+            if ((uint)idx > 25) continue;
+            freq[idx]++; n++;
+        }
+        if (n < 2) return 0;
+
+        double ioc = 0;
+        for (int i = 0; i < 26; i++) ioc += freq[i] * (freq[i] - 1);
+        ioc /= (double)(n * (n - 1));
+
+        int doublets = 0;
+        for (int i = 1; i < text.Length; i++)
+        {
+            char a = text[i - 1], b = text[i];
+            if (a >= 'A' && a <= 'Z' && a == b) doublets++;
+        }
+        double doubletFraction = (double)doublets / Math.Max(1, text.Length - 1);
+
+        return ioc * 1000.0 + (0.07 - doubletFraction) * 50.0;
     }
 }
