@@ -307,8 +307,11 @@ public sealed class EnigmaPredictServiceDeepSeek : IEnigmaPredictServiceDeepSeek
     {
         bestScore = current;
         double bestGain = StopEpsilon;
-        int[] saved = (int[])plug.Clone();
+        int[]? best = null;
 
+        // Snapshot the current pairs. We never mutate `plug` inside the loops;
+        // every trial uses a fresh clone, so an accepted trial cannot corrupt
+        // the state seen by later trials.
         for (int a = 0; a < 26; a++)
         {
             int b = plug[a];
@@ -316,23 +319,30 @@ public sealed class EnigmaPredictServiceDeepSeek : IEnigmaPredictServiceDeepSeek
 
             for (int c = 0; c < 26; c++)
             {
-                if (c == a || c == b || plug[c] != c) continue;
+                if (c == a || c == b) continue;
+                if (plug[c] != c) continue;
 
-                plug[a] = a; plug[b] = b;
-                plug[a] = c; plug[c] = a;
-                double s = ScoreWithPositionsAndPlug(text, pl, pm, pr, plug, ct);
-                if (s - current > bestGain) { bestGain = s - current; bestScore = s; Array.Copy(plug, saved, 26); }
-                else { plug[a] = a; plug[c] = c; plug[a] = b; plug[b] = a; }
+                // Variant 1: move end a from b to c; b becomes free.
+                {
+                    int[] t = (int[])plug.Clone();
+                    t[a] = a; t[b] = b;
+                    t[a] = c; t[c] = a;
+                    double s = ScoreWithPositionsAndPlug(text, pl, pm, pr, t, ct);
+                    if (s - current > bestGain) { bestGain = s - current; bestScore = s; best = t; }
+                }
 
-                plug[a] = a; plug[b] = b;
-                plug[b] = c; plug[c] = b;
-                s = ScoreWithPositionsAndPlug(text, pl, pm, pr, plug, ct);
-                if (s - current > bestGain) { bestGain = s - current; bestScore = s; Array.Copy(plug, saved, 26); }
-                else { plug[b] = b; plug[c] = c; plug[a] = b; plug[b] = a; }
+                // Variant 2: move end b from a to c; a becomes free.
+                {
+                    int[] t = (int[])plug.Clone();
+                    t[a] = a; t[b] = b;
+                    t[b] = c; t[c] = b;
+                    double s = ScoreWithPositionsAndPlug(text, pl, pm, pr, t, ct);
+                    if (s - current > bestGain) { bestGain = s - current; bestScore = s; best = t; }
+                }
             }
         }
 
-        if (bestGain > StopEpsilon) { Array.Copy(saved, plug, 26); return true; }
+        if (best != null) { Array.Copy(best, plug, 26); return true; }
         return false;
     }
 
@@ -342,33 +352,40 @@ public sealed class EnigmaPredictServiceDeepSeek : IEnigmaPredictServiceDeepSeek
     {
         bestScore = current;
         double bestGain = StopEpsilon;
-        int[] saved = (int[])plug.Clone();
+        int[]? best = null;
 
         for (int a = 0; a < 26; a++)
         {
             int b = plug[a];
             if (b == a) continue;
+
             for (int c = a + 1; c < 26; c++)
             {
                 int d = plug[c];
                 if (d == c) continue;
                 if (c == b || d == a) continue;
 
-                plug[a] = a; plug[b] = b; plug[c] = c; plug[d] = d;
-                plug[a] = c; plug[c] = a; plug[b] = d; plug[d] = b;
-                double s = ScoreWithPositionsAndPlug(text, pl, pm, pr, plug, ct);
-                if (s - current > bestGain) { bestGain = s - current; bestScore = s; Array.Copy(plug, saved, 26); }
-                else { plug[a] = a; plug[b] = b; plug[c] = c; plug[d] = d; plug[a] = b; plug[b] = a; plug[c] = d; plug[d] = c; }
+                // Variant 1: relink to (a,c) and (b,d).
+                {
+                    int[] t = (int[])plug.Clone();
+                    t[a] = a; t[b] = b; t[c] = c; t[d] = d;
+                    t[a] = c; t[c] = a; t[b] = d; t[d] = b;
+                    double s = ScoreWithPositionsAndPlug(text, pl, pm, pr, t, ct);
+                    if (s - current > bestGain) { bestGain = s - current; bestScore = s; best = t; }
+                }
 
-                plug[a] = a; plug[b] = b; plug[c] = c; plug[d] = d;
-                plug[a] = d; plug[d] = a; plug[b] = c; plug[c] = b;
-                s = ScoreWithPositionsAndPlug(text, pl, pm, pr, plug, ct);
-                if (s - current > bestGain) { bestGain = s - current; bestScore = s; Array.Copy(plug, saved, 26); }
-                else { plug[a] = a; plug[b] = b; plug[c] = c; plug[d] = d; plug[a] = b; plug[b] = a; plug[c] = d; plug[d] = c; }
+                // Variant 2: relink to (a,d) and (b,c).
+                {
+                    int[] t = (int[])plug.Clone();
+                    t[a] = a; t[b] = b; t[c] = c; t[d] = d;
+                    t[a] = d; t[d] = a; t[b] = c; t[c] = b;
+                    double s = ScoreWithPositionsAndPlug(text, pl, pm, pr, t, ct);
+                    if (s - current > bestGain) { bestGain = s - current; bestScore = s; best = t; }
+                }
             }
         }
 
-        if (bestGain > StopEpsilon) { Array.Copy(saved, plug, 26); return true; }
+        if (best != null) { Array.Copy(best, plug, 26); return true; }
         return false;
     }
 
@@ -414,13 +431,35 @@ public sealed class EnigmaPredictServiceDeepSeek : IEnigmaPredictServiceDeepSeek
         return (pl, pm, pr, best, changed);
     }
 
-    private static double ScoreWithPositionsAndPlug(string text, int pl, int pm, int pr, int[] plug, CancellationToken ct)
+    private static double ScoreWithPositionsAndPlug(
+        string text, int pl, int pm, int pr, int[] plug, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
+        AssertInvolution(plug);
         var dec = EnigmaMachineDeepSeek.Process(
             text.AsSpan(), FixedRotors, FixedReflector, pl, pm, pr, 0, 0, 0, plug,
             out _, out _, out _);
         return EnglishScorerDeepSeek.Score(dec);
+    }
+
+    // Debug-only safety net: every plug array that reaches the scorer must be a
+    // valid involution. This is what would have caught the bug on the first run.
+    private static bool IsValidInvolution(int[] plug)
+    {
+        for (int i = 0; i < 26; i++)
+        {
+            int j = plug[i];
+            if ((uint)j > 25) return false;
+            if (plug[j] != i) return false;
+        }
+        return true;
+    }
+
+    [System.Diagnostics.Conditional("DEBUG")]
+    private static void AssertInvolution(int[] plug)
+    {
+        if (!IsValidInvolution(plug))
+            throw new InvalidOperationException("Plugboard is not an involution.");
     }
 
     private static int CountPairs(int[] plug)
