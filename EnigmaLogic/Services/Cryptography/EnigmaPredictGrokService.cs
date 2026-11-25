@@ -1,364 +1,444 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading;
-using System.Threading.Tasks;
+﻿using System.Text;
 using EnigmaLogic.Models;
 using EnigmaLogic.Services.Abstractions;
 
-namespace EnigmaLogic.Services.Cryptography
+namespace EnigmaLogic.Services.Cryptography;
+
+/// <summary>
+/// High-performance heuristic cryptanalysis service for the historical 3-rotor Enigma I.
+/// Uses Index-of-Coincidence + English bigram/trigram fitness with a two-phase search
+/// (position enumeration + greedy plugboard hill-climb) that finishes in well under
+/// a second for typical ciphertext lengths while fully respecting cancellation.
+/// </summary>
+public sealed class EnigmaPredictGrokService : IEnigmaPredictGrokService
 {
-    /// <summary>
-    /// Ciphertext-only attack for the project’s fixed Enigma (rotors I-II-III,
-    /// rings AAA, reflector B). Recovers initial positions + plugboard.
-    /// Fully deterministic and designed to pass the long-message evaluation suite.
-    /// </summary>
-    public sealed class EnigmaPredictGrokService : IEnigmaPredictGrokService
+    // ──────────────────────────────────────────────────────────────────────
+    // Historical wirings (Enigma I, Reflector B)
+    // ──────────────────────────────────────────────────────────────────────
+    private static readonly IReadOnlyDictionary<string, string> RotorWirings =
+        new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["I"] = "EKMFLGDQVZNTOWYHXUSPAIBRCJ",
+            ["II"] = "AJDKSIRUXBLHWTMCQGZNPYFVOE",
+            ["III"] = "BDFHJLCPRTXVZNYEIWGAKMUSQO",
+            ["IV"] = "ESOVPZJAYQUIRHXLNFTGKDCMWB",
+            ["V"] = "VZBRGITYUPSDNHLXAWMJQOFECK"
+        };
+
+    private static readonly IReadOnlyDictionary<string, char> RotorNotches =
+        new Dictionary<string, char>(StringComparer.Ordinal)
+        {
+            ["I"] = 'Q',
+            ["II"] = 'E',
+            ["III"] = 'V',
+            ["IV"] = 'J',
+            ["V"] = 'Z'
+        };
+
+    private const string ReflectorB = "YRUHQSLDPXNGOKMIEBFZCWVJAT";
+
+    // English monogram log-probabilities (approximate, normalised) – retained as a light prior
+    private static readonly double[] LogMonogram =
     {
-        // ------------------------------------------------------------------
-        // Historical wiring
-        // ------------------------------------------------------------------
-        private static readonly string[] Rotors =
+        -2.54, -4.20, -3.37, -3.44, -2.40,  // A-E
+        -3.93, -3.80, -3.13, -2.83, -5.50,  // F-J
+        -4.15, -3.25, -3.48, -2.85, -2.66,  // K-O
+        -3.70, -5.30, -2.91, -2.70, -2.55,  // P-T
+        -3.75, -4.15, -3.90, -5.00, -3.70,  // U-Y
+        -5.80                               // Z
+    };
+
+    // High-value English bigrams (log-scale reward; higher = more English-like)
+    private static readonly Dictionary<string, double> BigramScore =
+        new(StringComparer.Ordinal)
         {
-            "EKMFLGDQVZNTOWYHXUSPAIBRCJ", // I
-            "AJDKSIRUXBLHWTMCQGZNPYFVOE", // II
-            "BDFHJLCPRTXVZNYEIWGAKMUSQO"  // III
+            ["TH"] = 3.2,
+            ["HE"] = 3.0,
+            ["IN"] = 2.8,
+            ["ER"] = 2.7,
+            ["AN"] = 2.6,
+            ["RE"] = 2.5,
+            ["ON"] = 2.4,
+            ["AT"] = 2.3,
+            ["EN"] = 2.3,
+            ["ND"] = 2.2,
+            ["TI"] = 2.1,
+            ["ES"] = 2.1,
+            ["OR"] = 2.0,
+            ["TE"] = 2.0,
+            ["OF"] = 1.9,
+            ["ED"] = 1.9,
+            ["IS"] = 1.8,
+            ["IT"] = 1.8,
+            ["AL"] = 1.7,
+            ["AR"] = 1.7,
+            ["ST"] = 1.6,
+            ["TO"] = 1.6,
+            ["NT"] = 1.5,
+            ["NG"] = 1.5,
+            ["SE"] = 1.4,
+            ["HA"] = 1.4,
+            ["AS"] = 1.3,
+            ["OU"] = 1.3,
+            ["IO"] = 1.2,
+            ["LE"] = 1.2,
+            ["VE"] = 1.1,
+            ["CO"] = 1.1,
+            ["ME"] = 1.0,
+            ["DE"] = 1.0,
+            ["HI"] = 0.9,
+            ["RI"] = 0.9,
+            ["RO"] = 0.8,
+            ["IC"] = 0.8,
+            ["NE"] = 0.7,
+            ["EA"] = 0.7,
+            ["RA"] = 0.6,
+            ["CE"] = 0.6
         };
 
-        private static readonly char[] Notches = { 'Q', 'E', 'V' }; // I, II, III
-        private static readonly string Reflector = "YRUHQSLDPXNGOKMIEBFZCWVJAT";
-
-        // Combined English + German monogram frequencies
-        private static readonly double[] Freq =
+    // High-value English trigrams
+    private static readonly Dictionary<string, double> TrigramScore =
+        new(StringComparer.Ordinal)
         {
-            0.0651,0.0189,0.0306,0.0508,0.1740,0.0166,0.0301,
-            0.0476,0.0755,0.0027,0.0121,0.0344,0.0253,0.0978,
-            0.0251,0.0079,0.0002,0.0700,0.0727,0.0615,0.0435,
-            0.0067,0.0189,0.0003,0.0040,0.0113
+            ["THE"] = 4.5,
+            ["AND"] = 3.8,
+            ["ING"] = 3.5,
+            ["ION"] = 3.2,
+            ["TIO"] = 3.0,
+            ["ENT"] = 2.9,
+            ["ATI"] = 2.7,
+            ["FOR"] = 2.6,
+            ["HER"] = 2.5,
+            ["TER"] = 2.4,
+            ["HAT"] = 2.3,
+            ["THA"] = 2.2,
+            ["ERE"] = 2.1,
+            ["ATE"] = 2.0,
+            ["HIS"] = 1.9,
+            ["CON"] = 1.8,
+            ["RES"] = 1.7,
+            ["VER"] = 1.6,
+            ["ALL"] = 1.5,
+            ["ONS"] = 1.4,
+            ["NCE"] = 1.3,
+            ["WIT"] = 1.2,
+            ["TIS"] = 1.1,
+            ["OFT"] = 1.0,
+            ["ITH"] = 0.9,
+            ["TED"] = 0.9,
+            ["ERS"] = 0.8,
+            ["ARE"] = 0.8,
+            ["REA"] = 0.7,
+            ["COM"] = 0.7
         };
 
-        // High-value digraphs (EN + DE)
-        private static readonly HashSet<string> Digraphs = new(StringComparer.Ordinal)
+    // ──────────────────────────────────────────────────────────────────────
+    // Public API
+    // ──────────────────────────────────────────────────────────────────────
+    public Task<EnigmaSettings> CrackAsync(string ciphertext, CancellationToken cancellationToken = default)
+    {
+        // Synchronous check so an already-cancelled token throws immediately
+        // before any work is queued on the thread-pool.
+        cancellationToken.ThrowIfCancellationRequested();
+
+        // Pass the token to Task.Run so cancellation propagates cleanly as
+        // OperationCanceledException / TaskCanceledException.
+        return Task.Run(() => CrackCore(ciphertext, cancellationToken), cancellationToken);
+    }
+
+    private EnigmaSettings CrackCore(string ciphertext, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+
+        string clean = Normalise(ciphertext);
+        if (clean.Length < 20)
+            throw new ArgumentException("Ciphertext too short for reliable cryptanalysis (min 20 letters).", nameof(ciphertext));
+
+        // Fixed historical configuration used by the heuristic:
+        // Rotor order I-II-III, rings AAA, Reflector B.
+        // (Searching all 60 rotor orders × 26³ rings is deliberately avoided
+        //  to keep the whole attack under a second.)
+        const string leftName = "I";
+        const string midName = "II";
+        const string rightName = "III";
+
+        // ── Phase 1: exhaustive search of the 26³ starting positions ──────
+        var bestPos = ('A', 'A', 'A');
+        double bestScore = double.NegativeInfinity;
+
+        var lockObj = new object();
+        Parallel.For(0, 26, new ParallelOptions { CancellationToken = ct }, i =>
         {
-            "TH","HE","IN","ER","AN","RE","ON","AT","EN","ND","TI","ES","OR","TE","OF",
-            "ED","IS","IT","AL","AR","ST","TO","NT","NG","SE","HA","AS","OU","IO","LE",
-            "VE","CO","ME","DE","HI","RI","RO","IC","NE","CH","EI","IE","GE","UN","ZU",
-            "BE","AU","EL","SS","SCH","DIE","DER","UND","EIN","ICH","NIC","SCH","CHE"
-        };
+            // Re-check at the start of every outer iteration so cancellation
+            // is observed promptly and does not become wrapped in AggregateException.
+            ct.ThrowIfCancellationRequested();
 
-        public Task<EnigmaSettings> CrackAsync(string ciphertext, CancellationToken cancellationToken = default)
-        {
-            if (string.IsNullOrWhiteSpace(ciphertext))
-                throw new ArgumentException("Ciphertext must not be empty.", nameof(ciphertext));
-
-            string ct = Sanitize(ciphertext);
-            if (ct.Length < 20)
-                throw new ArgumentException("Ciphertext too short for reliable statistical attack (min ~20 letters).", nameof(ciphertext));
-
-            return Task.Run(() => Attack(ct, cancellationToken), cancellationToken);
-        }
-
-        // ------------------------------------------------------------------
-        // Attack
-        // ------------------------------------------------------------------
-        private static EnigmaSettings Attack(string ct, CancellationToken ctkn)
-        {
-            // Phase 1 – exhaustive position search (empty plugboard)
-            var ranked = new List<(int L, int M, int R, double Score)>(17576);
-
-            for (int l = 0; l < 26; l++)
-                for (int m = 0; m < 26; m++)
-                    for (int r = 0; r < 26; r++)
-                    {
-                        ctkn.ThrowIfCancellationRequested();
-                        string plain = Decrypt(ct, l, m, r, Array.Empty<(int, int)>());
-                        ranked.Add((l, m, r, Score(plain)));
-                    }
-
-            // Keep a generous top set
-            var top = ranked.OrderByDescending(x => x.Score).Take(60).ToArray();
-
-            EnigmaSettings best = default!;
-            double bestScore = double.NegativeInfinity;
-
-            // Phase 2 – stecker recovery on the best positions
-            foreach (var (L, M, R, _) in top)
+            for (int j = 0; j < 26; j++)
             {
-                ctkn.ThrowIfCancellationRequested();
-
-                var plugs = RecoverSteckers(ct, L, M, R, ctkn);
-                string plain = Decrypt(ct, L, M, R, plugs);
-                double sc = Score(plain);
-
-                if (sc > bestScore)
+                for (int k = 0; k < 26; k++)
                 {
-                    bestScore = sc;
-                    best = ToSettings(L, M, R, plugs);
-                }
-            }
+                    ct.ThrowIfCancellationRequested();
 
-            // Phase 3 – local position refinement around the winner
-            // (sometimes the empty-plug ranking is slightly off once steckers exist)
-            int bl = best.Rotor1 - 'A', bm = best.Rotor2 - 'A', br = best.Rotor3 - 'A';
-            var finalPlugs = ParsePlugs(best.PlugboardPairs);
+                    char L = (char)('A' + i);
+                    char M = (char)('A' + j);
+                    char R = (char)('A' + k);
 
-            for (int dl = -2; dl <= 2; dl++)
-                for (int dm = -2; dm <= 2; dm++)
-                    for (int dr = -2; dr <= 2; dr++)
+                    string candidate = Decrypt(
+                        clean,
+                        leftName, midName, rightName,
+                        'A', 'A', 'A',          // rings fixed
+                        L, M, R,
+                        Array.Empty<(char, char)>());
+
+                    double score = Fitness(candidate);
+                    if (score > bestScore)
                     {
-                        ctkn.ThrowIfCancellationRequested();
-                        int l = (bl + dl + 26) % 26;
-                        int m = (bm + dm + 26) % 26;
-                        int r = (br + dr + 26) % 26;
-
-                        // re-optimise steckers for the neighbour
-                        var plugs = RecoverSteckers(ct, l, m, r, ctkn);
-                        string plain = Decrypt(ct, l, m, r, plugs);
-                        double sc = Score(plain);
-
-                        if (sc > bestScore)
+                        lock (lockObj)
                         {
-                            bestScore = sc;
-                            best = ToSettings(l, m, r, plugs);
-                        }
-                    }
-
-            return best;
-        }
-
-        // ------------------------------------------------------------------
-        // Stecker recovery – multi-pass greedy with full pair evaluation
-        // ------------------------------------------------------------------
-        private static List<(int, int)> RecoverSteckers(string ct, int L, int M, int R, CancellationToken ctkn)
-        {
-            var plugs = new List<(int, int)>();
-            var used = new bool[26];
-            double current = Score(Decrypt(ct, L, M, R, plugs));
-
-            for (int round = 0; round < 10; round++)
-            {
-                ctkn.ThrowIfCancellationRequested();
-
-                int bestA = -1, bestB = -1;
-                double bestDelta = 0.0;
-
-                for (int a = 0; a < 26; a++)
-                {
-                    if (used[a]) continue;
-                    for (int b = a + 1; b < 26; b++)
-                    {
-                        if (used[b]) continue;
-
-                        plugs.Add((a, b));
-                        double s = Score(Decrypt(ct, L, M, R, plugs));
-                        double delta = s - current;
-                        plugs.RemoveAt(plugs.Count - 1);
-
-                        if (delta > bestDelta)
-                        {
-                            bestDelta = delta;
-                            bestA = a;
-                            bestB = b;
-                        }
-                    }
-                }
-
-                if (bestDelta <= 0.15)          // small threshold to avoid noise
-                    break;
-
-                plugs.Add((bestA, bestB));
-                used[bestA] = used[bestB] = true;
-                current += bestDelta;
-            }
-
-            // Final clean-up pass: try to replace any pair if a better one exists
-            bool improved;
-            do
-            {
-                improved = false;
-                for (int i = 0; i < plugs.Count; i++)
-                {
-                    var old = plugs[i];
-                    used[old.Item1] = used[old.Item2] = false;
-                    plugs.RemoveAt(i);
-
-                    int bestA = -1, bestB = -1;
-                    double bestDelta = 0.0;
-                    double baseScore = Score(Decrypt(ct, L, M, R, plugs));
-
-                    for (int a = 0; a < 26; a++)
-                    {
-                        if (used[a]) continue;
-                        for (int b = a + 1; b < 26; b++)
-                        {
-                            if (used[b]) continue;
-                            plugs.Add((a, b));
-                            double s = Score(Decrypt(ct, L, M, R, plugs));
-                            plugs.RemoveAt(plugs.Count - 1);
-                            if (s - baseScore > bestDelta)
+                            if (score > bestScore)
                             {
-                                bestDelta = s - baseScore;
-                                bestA = a;
-                                bestB = b;
+                                bestScore = score;
+                                bestPos = (L, M, R);
                             }
                         }
                     }
-
-                    if (bestA >= 0 && bestDelta > 0.1)
-                    {
-                        plugs.Insert(i, (bestA, bestB));
-                        used[bestA] = used[bestB] = true;
-                        improved = true;
-                    }
-                    else
-                    {
-                        // restore original
-                        plugs.Insert(i, old);
-                        used[old.Item1] = used[old.Item2] = true;
-                    }
                 }
-            } while (improved);
+            }
+        });
 
-            return plugs;
-        }
+        ct.ThrowIfCancellationRequested();
 
-        // ------------------------------------------------------------------
-        // Scoring
-        // ------------------------------------------------------------------
-        private static double Score(string text)
+        // ── Phase 2: greedy hill-climb on the plugboard ───────────────────
+        // Allow up to the military maximum of 10 plugboard pairs so that
+        // longer messages with denser steckering can still be recovered.
+        var plugs = new List<(char, char)>();
+        var used = new bool[26];
+
+        for (int pairCount = 0; pairCount < 10; pairCount++)
         {
-            int n = text.Length;
-            if (n < 2) return double.NegativeInfinity;
+            ct.ThrowIfCancellationRequested();
 
-            var cnt = new int[26];
-            foreach (char c in text) cnt[c - 'A']++;
+            double localBest = bestScore;
+            (char, char)? bestPair = null;
 
-            // Index of Coincidence
-            double ic = 0;
-            for (int i = 0; i < 26; i++)
-                ic += cnt[i] * (cnt[i] - 1.0);
-            ic /= (double)n * (n - 1);
-            double icPart = 180.0 * Math.Exp(-Math.Abs(ic - 0.067) * 25.0);
-
-            // Monogram
-            double mono = 0;
-            for (int i = 0; i < 26; i++)
+            for (char a = 'A'; a <= 'Z'; a++)
             {
-                double e = Freq[i] * n;
-                if (e > 0.1)
+                if (used[a - 'A']) continue;
+                for (char b = (char)(a + 1); b <= 'Z'; b++)
                 {
-                    double d = cnt[i] - e;
-                    mono -= d * d / e;
+                    if (used[b - 'A']) continue;
+
+                    var trial = new List<(char, char)>(plugs) { (a, b) };
+                    string cand = Decrypt(
+                        clean,
+                        leftName, midName, rightName,
+                        'A', 'A', 'A',
+                        bestPos.Item1, bestPos.Item2, bestPos.Item3,
+                        trial);
+
+                    double sc = Fitness(cand);
+                    if (sc > localBest)
+                    {
+                        localBest = sc;
+                        bestPair = (a, b);
+                    }
                 }
             }
-            mono = 60.0 + mono * 0.12;
 
-            // Digraph
-            int hits = 0;
-            for (int i = 0; i < n - 1; i++)
-                if (Digraphs.Contains(text.AsSpan(i, 2).ToString()))
-                    hits++;
-            double dig = hits * 2.4;
+            if (bestPair is null || localBest <= bestScore + 1e-6)
+                break; // no further improvement
 
-            return icPart + mono + dig;
+            plugs.Add(bestPair.Value);
+            used[bestPair.Value.Item1 - 'A'] = true;
+            used[bestPair.Value.Item2 - 'A'] = true;
+            bestScore = localBest;
         }
 
-        // ------------------------------------------------------------------
-        // Correct Enigma core (rings fixed to AAA)
-        // ------------------------------------------------------------------
-        private static string Decrypt(string ct, int posL, int posM, int posR, IReadOnlyList<(int, int)> plugs)
-        {
-            // Build plugboard map
-            Span<int> plug = stackalloc int[26];
-            for (int i = 0; i < 26; i++) plug[i] = i;
-            foreach (var (a, b) in plugs)
-            {
-                plug[a] = b;
-                plug[b] = a;
-            }
+        // Convert plug list to the required string representation ("AB", "CD", …)
+        var plugStrings = plugs
+            .Select(p => $"{p.Item1}{p.Item2}")
+            .ToList()
+            .AsReadOnly();
 
-            var sb = new StringBuilder(ct.Length);
-            int pL = posL, pM = posM, pR = posR;
-
-            foreach (char ch in ct)
-            {
-                // Double-stepping
-                bool mNotch = (char)('A' + pM) == Notches[1];
-                bool rNotch = (char)('A' + pR) == Notches[2];
-
-                if (mNotch) pL = (pL + 1) % 26;
-                if (mNotch || rNotch) pM = (pM + 1) % 26;
-                pR = (pR + 1) % 26;
-
-                int c = plug[ch - 'A'];
-
-                // Right → Middle → Left
-                c = Rotor(Rotors[2], pR, c, forward: true);
-                c = Rotor(Rotors[1], pM, c, forward: true);
-                c = Rotor(Rotors[0], pL, c, forward: true);
-
-                // Reflector
-                c = Reflector[c] - 'A';
-
-                // Left → Middle → Right
-                c = Rotor(Rotors[0], pL, c, forward: false);
-                c = Rotor(Rotors[1], pM, c, forward: false);
-                c = Rotor(Rotors[2], pR, c, forward: false);
-
-                c = plug[c];
-                sb.Append((char)('A' + c));
-            }
-            return sb.ToString();
-        }
-
-        private static int Rotor(string wiring, int pos, int c, bool forward)
-        {
-            if (forward)
-            {
-                c = (c + pos) % 26;
-                c = wiring[c] - 'A';
-                c = (c - pos + 26) % 26;
-                return c;
-            }
-            else
-            {
-                c = (c + pos) % 26;
-                for (int i = 0; i < 26; i++)
-                    if (wiring[i] - 'A' == c)
-                        return (i - pos + 26) % 26;
-                return c; // unreachable
-            }
-        }
-
-        // ------------------------------------------------------------------
-        // Helpers
-        // ------------------------------------------------------------------
-        private static EnigmaSettings ToSettings(int L, int M, int R, List<(int, int)> plugs)
-        {
-            var list = plugs
-                .Select(p => $"{(char)('A' + p.Item1)}{(char)('A' + p.Item2)}")
-                .OrderBy(s => s)
-                .ToList();
-            return new EnigmaSettings((char)('A' + L), (char)('A' + M), (char)('A' + R), list);
-        }
-
-        private static List<(int, int)> ParsePlugs(IReadOnlyList<string> pairs)
-        {
-            var list = new List<(int, int)>();
-            foreach (var p in pairs)
-                if (p.Length >= 2)
-                    list.Add((p[0] - 'A', p[1] - 'A'));
-            return list;
-        }
-
-        private static string Sanitize(string text)
-        {
-            var sb = new StringBuilder(text.Length);
-            foreach (char c in text)
-                if (char.IsLetter(c))
-                    sb.Append(char.ToUpperInvariant(c));
-            return sb.ToString();
-        }
+        return new EnigmaSettings(
+            Rotor1: bestPos.Item1,
+            Rotor2: bestPos.Item2,
+            Rotor3: bestPos.Item3,
+            PlugboardPairs: plugStrings);
     }
+
+    // ──────────────────────────────────────────────────────────────────────
+    // Core Enigma simulation (single-pass decrypt)
+    // ──────────────────────────────────────────────────────────────────────
+    private static string Decrypt(
+        string ciphertext,
+        string leftName, string midName, string rightName,
+        char leftRing, char midRing, char rightRing,
+        char leftPos, char midPos, char rightPos,
+        IReadOnlyList<(char, char)> plugs)
+    {
+        // Build fast lookup tables
+        int[] plugMap = BuildIdentityMap();
+        foreach (var (a, b) in plugs)
+        {
+            plugMap[a - 'A'] = b - 'A';
+            plugMap[b - 'A'] = a - 'A';
+        }
+
+        int[] leftWiring = BuildWiring(RotorWirings[leftName]);
+        int[] midWiring = BuildWiring(RotorWirings[midName]);
+        int[] rightWiring = BuildWiring(RotorWirings[rightName]);
+        int[] leftInv = Invert(leftWiring);
+        int[] midInv = Invert(midWiring);
+        int[] rightInv = Invert(rightWiring);
+        int[] reflector = BuildWiring(ReflectorB);
+
+        char leftNotch = RotorNotches[leftName];
+        char midNotch = RotorNotches[midName];
+        char rightNotch = RotorNotches[rightName];
+
+        // Effective positions after ring settings
+        int L = Mod(leftPos - 'A' - (leftRing - 'A'));
+        int M = Mod(midPos - 'A' - (midRing - 'A'));
+        int R = Mod(rightPos - 'A' - (rightRing - 'A'));
+
+        var sb = new StringBuilder(ciphertext.Length);
+
+        foreach (char ch in ciphertext)
+        {
+            // ── Stepping (double-step anomaly included) ───────────────────
+            bool midAtNotch = (char)('A' + M) == midNotch;
+            bool rightAtNotch = (char)('A' + R) == rightNotch;
+
+            if (midAtNotch)
+                L = Mod(L + 1);          // left steps when middle is on notch
+            if (midAtNotch || rightAtNotch)
+                M = Mod(M + 1);          // middle steps on its own notch or when right is on notch
+            R = Mod(R + 1);              // right always steps
+
+            // ── Encryption path ───────────────────────────────────────────
+            int c = plugMap[ch - 'A'];
+
+            // Right rotor
+            c = rightWiring[Mod(c + R)];
+            c = Mod(c - R);
+            // Middle rotor
+            c = midWiring[Mod(c + M)];
+            c = Mod(c - M);
+            // Left rotor
+            c = leftWiring[Mod(c + L)];
+            c = Mod(c - L);
+
+            // Reflector
+            c = reflector[c];
+
+            // Inverse left
+            c = leftInv[Mod(c + L)];
+            c = Mod(c - L);
+            // Inverse middle
+            c = midInv[Mod(c + M)];
+            c = Mod(c - M);
+            // Inverse right
+            c = rightInv[Mod(c + R)];
+            c = Mod(c - R);
+
+            c = plugMap[c];
+            sb.Append((char)('A' + c));
+        }
+
+        return sb.ToString();
+    }
+
+    // ──────────────────────────────────────────────────────────────────────
+    // Fitness function (Index of Coincidence + bigram / trigram scoring)
+    // ──────────────────────────────────────────────────────────────────────
+    private static double Fitness(string text)
+    {
+        if (text.Length < 3) return double.NegativeInfinity;
+
+        int n = text.Length;
+        int[] counts = new int[26];
+        foreach (char c in text)
+            counts[c - 'A']++;
+
+        // Index of Coincidence (primary non-randomness detector)
+        double ic = 0.0;
+        for (int i = 0; i < 26; i++)
+            ic += counts[i] * (counts[i] - 1.0);
+        ic /= n * (n - 1.0);
+
+        // Light monogram prior
+        double mono = 0.0;
+        for (int i = 0; i < 26; i++)
+            if (counts[i] > 0)
+                mono += counts[i] * LogMonogram[i];
+        mono /= n;
+
+        // Bigram score
+        double bigram = 0.0;
+        for (int i = 0; i < n - 1; i++)
+        {
+            string bg = text.Substring(i, 2);
+            if (BigramScore.TryGetValue(bg, out double s))
+                bigram += s;
+        }
+        bigram /= Math.Max(1, n - 1);
+
+        // Trigram score
+        double trigram = 0.0;
+        for (int i = 0; i < n - 2; i++)
+        {
+            string tg = text.Substring(i, 3);
+            if (TrigramScore.TryGetValue(tg, out double s))
+                trigram += s;
+        }
+        trigram /= Math.Max(1, n - 2);
+
+        // Weighted combination – IC remains the dominant term; n-grams
+        // supply the language model that steers the plugboard hill-climb
+        // out of false local optima.
+        return 0.45 * ic * 1000.0
+             + 0.15 * mono
+             + 0.25 * bigram * 10.0
+             + 0.15 * trigram * 15.0;
+    }
+
+    // ──────────────────────────────────────────────────────────────────────
+    // Helpers
+    // ──────────────────────────────────────────────────────────────────────
+    private static string Normalise(string s)
+    {
+        var sb = new StringBuilder(s.Length);
+        foreach (char c in s)
+        {
+            if (c is >= 'A' and <= 'Z') sb.Append(c);
+            else if (c is >= 'a' and <= 'z') sb.Append((char)(c - 32));
+        }
+        return sb.ToString();
+    }
+
+    private static int[] BuildIdentityMap()
+    {
+        var m = new int[26];
+        for (int i = 0; i < 26; i++) m[i] = i;
+        return m;
+    }
+
+    private static int[] BuildWiring(string wiring)
+    {
+        var w = new int[26];
+        for (int i = 0; i < 26; i++)
+            w[i] = wiring[i] - 'A';
+        return w;
+    }
+
+    private static int[] Invert(int[] wiring)
+    {
+        var inv = new int[26];
+        for (int i = 0; i < 26; i++)
+            inv[wiring[i]] = i;
+        return inv;
+    }
+
+    private static int Mod(int x) => (x % 26 + 26) % 26;
 }
