@@ -1,152 +1,190 @@
 ﻿@{
-    var letters = Enumerable.Range('A', 26).Select(c => ((char)c).ToString()).ToList();
+    var letters = Enumerable.Range(65, 26).Select(c => ((char)c).ToString()).ToList();
 }
 
-<h2 class="converter-title">DECRYPTION GROK</h2>
+<section class="card lt-converter" aria-label="Formular Decryption Grok">
+    <h2 class="converter-title" style="text-align: center; margin-bottom: 20px;">DECRYPTION GROK</h2>
 
-<div class="colleague-workspace">
-    <section class="card lt-converter" aria-label="Formular Decryption Grok">
+    <!-- Caseta pentru textul codificat (Input) -->
+    <div class="lt-row" style="margin-bottom: 20px;">
+        <div class="lt-field" style="width: 100%;">
+            <label for="lt-ciphertext-grok">Ciphertext</label>
+            <textarea id="lt-ciphertext-grok" rows="5" placeholder="Enter the cipher here..."></textarea>
+        </div>
+    </div>
 
-        <div class="lt-row" style="margin-bottom: 20px;">
-            <div class="lt-field" style="width: 100%;">
-                <label for="lt-ciphertext-grok">Ciphertext</label>
-                <textarea id="lt-ciphertext-grok" rows="4" placeholder="Enter the cipher here..."></textarea>
-            </div>
+    <!-- Butoanele: criptanaliza automată sau decriptare cu cheia -->
+    <div style="text-align: center; margin-bottom: 20px; display: flex; justify-content: center; gap: 15px;">
+        <button type="button" id="lt-decode-grok" class="lt-button">DECODE</button>
+        <button type="button" id="lt-decode-key-grok" class="lt-button" style="background-color: #5c4033;">DECRYPT WITH KEY</button>
+    </div>
+
+    <!-- Caseta pentru textul decodificat (Output) -->
+    <div class="lt-row" style="margin-bottom: 20px;">
+        <div class="lt-field" style="width: 100%;">
+            <label for="lt-plaintext-grok">Plaintext</label>
+            <textarea id="lt-plaintext-grok" rows="5" placeholder="The plaintext will appear here..." readonly style="background-color: #f9f6f0;"></textarea>
+        </div>
+    </div>
+
+    <!-- Cheia: completată automat după DECODE și memorată; poate fi editată manual -->
+    <fieldset class="lt-letters" style="margin-top: 20px;">
+        <legend class="lt-legend">Key</legend>
+        <p id="lt-key-status-grok" style="margin-top: 0; font-size: 13px; color: #555;">DECODE fills in the key it finds. Reuse it with DECRYPT WITH KEY for short messages from the same key.</p>
+
+        <div class="lt-grid lt-grid-first">
+            @for (int i = 1; i <= 3; i++)
+            {
+                <div class="lt-cell">
+                    <span>@i</span>
+                    <select id="lt-rotor-grok-@i" class="rotor-select-grok" aria-label="Rotor @i">
+                        <option value="">–</option>
+                        @foreach (var l in letters)
+                        {
+                            <option value="@l">@l</option>
+                        }
+                    </select>
+                </div>
+            }
         </div>
 
-        <fieldset class="lt-letters">
-            <legend class="lt-legend">Rotors</legend>
+        <div class="lt-divider" aria-hidden="true"></div>
 
-            @* Primele 3 căsuțe pentru poziția rotoarelor *@
-            <div class="lt-grid lt-grid-first">
-                @for (int i = 1; i <= 3; i++)
-                {
-                    <div class="lt-cell">
-                        <span>@i</span>
-                        <select id="lt-letter-grok-@i" aria-label="Rotor @i">
-                            <option value="">–</option>
-                            @foreach (var l in letters)
-                            {
-                                <option value="@l">@l</option>
-                            }
-                        </select>
-                    </div>
-                }
-            </div>
-
-            <div class="lt-divider" aria-hidden="true"></div>
-
-            @* Căsuțele pentru Plugboard *@
-            <h3 class="lt-subtitle">Plugboard</h3>
-            <div class="lt-grid">
-                @for (int i = 4; i <= 29; i++)
-                {
-                    <div class="lt-cell">
-                        <span>@letters[i - 4]</span>
-                        <select id="lt-letter-grok-@i" class="plugboard-select-grok" data-letter="@letters[i - 4]" aria-label="Letter @letters[i - 4]">
-                            <option value="">–</option>
-                            @foreach (var l in letters)
-                            {
-                                <option value="@l">@l</option>
-                            }
-                        </select>
-                    </div>
-                }
-            </div>
-        </fieldset>
-
-        <div style="text-align: center; margin: 25px 0;">
-            <button type="button" id="btn-decode-grok" class="lt-button">DECODE</button>
+        <h3 class="lt-subtitle">Plugboard</h3>
+        <div class="lt-grid">
+            @foreach (var letter in letters)
+            {
+                <div class="lt-cell">
+                    <span>@letter</span>
+                    <select class="plugboard-select-grok" data-letter="@letter" aria-label="Letter @letter">
+                        <option value="">–</option>
+                        @foreach (var l in letters)
+                        {
+                            <option value="@l">@l</option>
+                        }
+                    </select>
+                </div>
+            }
         </div>
-
-        <div class="lt-row">
-            <div class="lt-field" style="width: 100%;">
-                <label for="lt-plaintext-grok">Plaintext</label>
-                <textarea id="lt-plaintext-grok" rows="4" placeholder="The plaintext will appear here..." readonly style="background-color: #f9f6f0;"></textarea>
-            </div>
-        </div>
-
-    </section>
-</div>
+    </fieldset>
+</section>
 
 <script>
     (function () {
-        // Menține simetria perechilor din Plugboard
-        $('.plugboard-select-grok').on('change', function () {
-            var sourceLetter = $(this).data('letter');
-            var targetLetter = $(this).val();
+        var storageKey = 'enigma-grok-key';
+        var $output = $('#lt-plaintext-grok');
+        var $status = $('#lt-key-status-grok');
+        var $plugs = $('.plugboard-select-grok');
 
-            $('.plugboard-select-grok').each(function () {
-                var l = $(this).data('letter');
-                if (l !== sourceLetter && $(this).val() === sourceLetter) {
-                    $(this).val('');
-                }
-            });
+        function plugSelect(letter) {
+            return $plugs.filter('[data-letter="' + letter + '"]');
+        }
 
-            if (targetLetter && targetLetter !== sourceLetter) {
-                $('.plugboard-select-grok').each(function () {
-                    var l = $(this).data('letter');
-                    if (l !== targetLetter && $(this).val() === targetLetter && l !== sourceLetter) {
-                        $(this).val('');
-                    }
-                });
-
-                $('.plugboard-select-grok[data-letter="' + targetLetter + '"]').val(sourceLetter);
-            } else if (targetLetter === sourceLetter) {
-                $(this).val('');
-            }
-        });
-
-        // Apelul AJAX corectat pentru rutele din HomeController
-        $('#btn-decode-grok').on('click', function () {
-            var ciphertext = $('#lt-ciphertext-grok').val();
-            var rotor1 = $('#lt-letter-grok-1').val();
-            var rotor2 = $('#lt-letter-grok-2').val();
-            var rotor3 = $('#lt-letter-grok-3').val();
-
+        function readKey() {
             var pairs = [];
-            var seen = {};
-            $('.plugboard-select-grok').each(function () {
+            $plugs.each(function () {
                 var from = $(this).data('letter');
                 var to = $(this).val();
-                if (to && from !== to && !seen[from] && !seen[to]) {
-                    pairs.push(from + to);
-                    seen[from] = true;
-                    seen[to] = true;
-                }
+                if (to && from < to) pairs.push(from + to);
             });
+            return {
+                rotor1: $('#lt-rotor-grok-1').val(),
+                rotor2: $('#lt-rotor-grok-2').val(),
+                rotor3: $('#lt-rotor-grok-3').val(),
+                plugboardPairs: pairs
+            };
+        }
 
-            // Dacă utilizatorul a completat rotoarele, folosim decriptarea cu cheie cunoscută.
-            // Altfel, dacă sunt goale, putem lăsa serviciul de atac automat (DecryptGrok).
-            var hasRotors = rotor1 && rotor2 && rotor3;
-            var endpoint = hasRotors ? '/Home/DecryptGrokWithKey' : '/Home/DecryptGrok';
+        function writeKey(key) {
+            $('#lt-rotor-grok-1').val(key.rotor1 || '');
+            $('#lt-rotor-grok-2').val(key.rotor2 || '');
+            $('#lt-rotor-grok-3').val(key.rotor3 || '');
+            $plugs.val('');
+            (key.plugboardPairs || []).forEach(function (pair) {
+                plugSelect(pair[0]).val(pair[1]);
+                plugSelect(pair[1]).val(pair[0]);
+            });
+        }
+
+        function saveKey() {
+            try { localStorage.setItem(storageKey, JSON.stringify(readKey())); } catch (e) { }
+        }
+
+        function describe(key) {
+            var plugs = key.plugboardPairs.length ? key.plugboardPairs.join(' ') : 'none';
+            return 'Rotors: ' + key.rotor1 + ' ' + key.rotor2 + ' ' + key.rotor3 + ' | Plugboard: ' + plugs;
+        }
+
+        // Restabilește cheia salvată anterior din localStorage
+        try {
+            var saved = JSON.parse(localStorage.getItem(storageKey) || 'null');
+            if (saved) {
+                writeKey(saved);
+                $status.text('Remembered key — ' + describe(readKey()));
+            }
+        } catch (e) { }
+
+        // Menține simetria în Plugboard (dacă A -> B, atunci și B -> A)
+        $plugs.on('change', function () {
+            var from = $(this).data('letter');
+            var to = $(this).val();
+            $plugs.each(function () {
+                if ($(this).val() === from && $(this).data('letter') !== to) $(this).val('');
+            });
+            if (to) {
+                var $partner = plugSelect(to);
+                var old = $partner.val();
+                if (old && old !== from) plugSelect(old).val('');
+                $partner.val(from);
+            }
+            saveKey();
+        });
+        $('.rotor-select-grok').on('change', saveKey);
+
+        function showError(xhr, fallback) {
+            var message = xhr.responseJSON && xhr.responseJSON.error ? xhr.responseJSON.error : fallback;
+            $output.val('Error: ' + message);
+        }
+
+        // 1. Atac automat (Criptanaliză)
+        $('#lt-decode-grok').on('click', function () {
+            var $button = $(this);
+            $button.prop('disabled', true).text('DECODING...');
+            $output.val('');
 
             $.ajax({
-                url: endpoint,
+                url: '/Home/DecryptGrok',
                 type: 'POST',
                 contentType: 'application/json',
-                data: JSON.stringify({
-                    ciphertext: ciphertext,
-                    rotor1: rotor1,
-                    rotor2: rotor2,
-                    rotor3: rotor3,
-                    plugboardPairs: pairs
-                }),
-                success: function (res) {
-                    // Preia corect proprietatea "plaintext" returnată de controller
-                    $('#lt-plaintext-grok').val(res.plaintext);
-
-                    // Dacă s-a folosit spargerea automată, actualizăm și rotoarele în interfață
-                    if (res.rotor1) $('#lt-letter-grok-1').val(res.rotor1);
-                    if (res.rotor2) $('#lt-letter-grok-2').val(res.rotor2);
-                    if (res.rotor3) $('#lt-letter-grok-3').val(res.rotor3);
+                data: JSON.stringify({ ciphertext: $('#lt-ciphertext-grok').val() }),
+                success: function (result) {
+                    $output.val(result.plaintext);
+                    writeKey(result);
+                    saveKey();
+                    $status.text('Found key — ' + describe(readKey()));
                 },
-                error: function (xhr) {
-                    var msg = (xhr.responseJSON && xhr.responseJSON.error)
-                        ? xhr.responseJSON.error
-                        : 'An error occurred during decoding.';
-                    alert(msg);
-                }
+                error: function (xhr) { showError(xhr, 'Decryption failed.'); },
+                complete: function () { $button.prop('disabled', false).text('DECODE'); }
+            });
+        });
+
+        // 2. Decriptare directă cu cheia cunoscută / setată manual
+        $('#lt-decode-key-grok').on('click', function () {
+            var $button = $(this);
+            var key = readKey();
+            $button.prop('disabled', true);
+
+            $.ajax({
+                url: '/Home/DecryptGrokWithKey',
+                type: 'POST',
+                contentType: 'application/json',
+                data: JSON.stringify($.extend({ ciphertext: $('#lt-ciphertext-grok').val() }, key)),
+                success: function (result) {
+                    $output.val(result.plaintext);
+                    $status.text('Decrypted with — ' + describe(key));
+                },
+                error: function (xhr) { showError(xhr, 'Decryption failed.'); },
+                complete: function () { $button.prop('disabled', false); }
             });
         });
     })();
