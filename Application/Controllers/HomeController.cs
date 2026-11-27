@@ -123,7 +123,6 @@ namespace ArhivaConvertoarelor.Controllers
                 return BadRequest(new { error = ex.Message });
             }
         }
-        }
 
         [HttpPost]
         public async Task<IActionResult> DecryptChatGPT([FromBody] DecryptRequest request)
@@ -197,17 +196,6 @@ namespace ArhivaConvertoarelor.Controllers
                 return BadRequest(new { error = ex.Message });
             }
         }
-    }
-
-    public record DecryptRequest(string? Ciphertext);
-
-    public record DecryptWithKeyRequest(
-        string? Ciphertext,
-        string? Rotor1,
-        string? Rotor2,
-        string? Rotor3,
-        List<string>? PlugboardPairs
-    );
 
         /// <summary>Decrypts with a known key using the ChatGPT simulation engine.</summary>
         [HttpPost]
