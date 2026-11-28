@@ -8,6 +8,7 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddControllersWithViews();
 builder.Services.AddSingleton<IEnigmaSimService, EnigmaSimService>();
 builder.Services.AddSingleton<IEnigmaPredictClaudeService, EnigmaPredictClaudeService>();
+builder.Services.AddSingleton<IEnigmaPredictChatGPTService, EnigmaPredictChatGPTService>();
 
 var app = builder.Build();
 
